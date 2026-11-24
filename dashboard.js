@@ -834,6 +834,7 @@ document.addEventListener('DOMContentLoaded', () => {
       items: state.items,
       engine: state.engine,
       subMode: state.subMode,
+      negPrompt: negPrompt || null,
       charDesc: charPrompt || null,
       styleDesc: stylePrompt || null,
       charImageBase64: (charToggle && charToggle.checked && state.charImageBase64) ? state.charImageBase64 : null,
@@ -959,6 +960,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const charPrompt = (charToggle && charToggle.checked && charPromptText) ? charPromptText.value.trim() : '';
     const stylePrompt = (styleToggle && styleToggle.checked && stylePromptText) ? stylePromptText.value.trim() : '';
+    const negPrompt = getCombinedNegativePrompt();
 
     targetItems.forEach(it => {
       it.status = 'generating';
@@ -986,6 +988,7 @@ document.addEventListener('DOMContentLoaded', () => {
       engine: state.engine,
       subMode: state.subMode,
       isRetry: true,
+      negPrompt: negPrompt || null,
       charDesc: charPrompt || null,
       styleDesc: stylePrompt || null,
       charImageBase64: (charToggle && charToggle.checked && state.charImageBase64) ? state.charImageBase64 : null,
