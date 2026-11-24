@@ -1,40 +1,50 @@
 {
   "manifest_version": 3,
   "name": "RenderX Image Studio",
-  "version": "1.0.5",
-  "description": "High-speed bulk AI image generator with timeline sync for video editing, character/style lock, and multi-engine auto-fallback.",
+  "version": "1.0.8",
+  "description": "Dual-mode account-level bulk media studio (Gemini Canvas & Google Flow) with 75% right split-screen docking and unified scroll.",
   "permissions": [
-    "storage",
     "tabs",
-    "scripting"
+    "scripting",
+    "storage",
+    "downloads",
+    "sidePanel"
   ],
   "host_permissions": [
-    "*://*.google.com/*",
-    "*://gemini.google.com/*",
-    "*://share.gemini.google/*",
-    "*://*.googleusercontent.com/*",
-    "*://*/*"
+    "https://gemini.google.com/*",
+    "https://flow.google.com/*",
+    "https://labs.google/*",
+    "https://*.googleusercontent.com/*"
   ],
   "background": {
-    "service_worker": "service-worker.js"
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "dashboard.html"
   },
   "content_scripts": [
     {
       "matches": [
-        "*://gemini.google.com/*",
-        "*://share.gemini.google/*",
-        "*://*.googleusercontent.com/*"
+        "https://gemini.google.com/*"
       ],
-      "all_frames": true,
-      "match_about_blank": true,
       "js": [
-        "js/gemini-content-script.js"
+        "content_canvas.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://flow.google.com/*",
+        "https://labs.google/*"
+      ],
+      "js": [
+        "content_flow.js"
       ],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "Open RenderX Image Studio"
+    "default_title": "Open RenderX Image Studio (Split-Screen Dock)"
   },
   "icons": {
     "128": "icons/icon128.png"
