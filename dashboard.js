@@ -98,6 +98,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const sessionInfoModal = $('sessionInfoModal');
   const closeSessionModalBtn = $('closeSessionModalBtn');
   const btnAddProfileSlot = $('btnAddProfileSlot');
+  const btnImportProProfiles = $('btnImportProProfiles');
+  const btnOpenAllUnlogged = $('btnOpenAllUnlogged');
+  const btnRefreshProfiles = $('btnRefreshProfiles');
   const profilesListContainer = $('profilesListContainer');
 
   // Toast
@@ -178,6 +181,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await apiJson('/api/profiles');
       if (data && data.success) {
         state.profiles = data.profiles || [];
+        if (btnImportProProfiles) {
+          const proCnt = Number(data.proImportCount || 0);
+          btnImportProProfiles.style.display = proCnt > 0 ? 'inline-flex' : 'none';
+          if (proCnt > 0) btnImportProProfiles.textContent = `📥 Import Pro (${proCnt})`;
+        }
         renderClusterStrip();
         renderProfilesModalList();
       }
@@ -199,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = `profile-slot-pill${p.enabled ? ' enabled' : ''}${p.logged_in ? ' logged-in' : ''}`;
-      btn.title = `${p.name} (${p.logged_in ? 'Logged In' : 'Needs Login'}) - Click to toggle in cluster`;
+      btn.title = `${p.name}${p.email ? ' - ' + p.email : ''} (${p.logged_in ? 'Signed In' : 'Needs Login'}) - Click to toggle`;
       btn.innerHTML = `<span class="profile-slot-dot"></span><span>P${i + 1}</span>`;
       btn.onclick = async () => {
         await apiJson(`/api/profiles/${p.id}/toggle`, 'POST', { enabled: !p.enabled });
@@ -216,6 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.profiles.forEach((p, idx) => {
       const row = document.createElement('div');
       row.className = 'profile-row-card';
+      const emailLabel = p.email ? escapeHtml(p.email) : (p.logged_in ? 'Google Cookies Verified' : 'Not Signed In');
       row.innerHTML = `
         <div class="profile-row-left">
           <input type="checkbox" class="prof-enable-cb" data-id="${p.id}" ${p.enabled ? 'checked' : ''} title="Use in parallel cluster">
@@ -225,17 +234,18 @@ document.addEventListener('DOMContentLoaded', () => {
               <span style="font-size:9px; color:#64748B;">#${idx + 1}</span>
             </div>
             <div class="profile-row-badges">
-              <span class="p-badge ${p.logged_in ? 'ok' : ''}">${p.logged_in ? '✓ Google Logged In' : 'Guest / Needs Login'}</span>
-              <span class="p-badge ${p.canvas_ready ? 'sync' : ''}">Canvas: ${p.canvas_ready ? 'Synced' : 'Auto'}</span>
-              <span class="p-badge ${p.flow_ready ? 'sync' : ''}">Flow: ${p.flow_ready ? 'Synced' : 'Login Required'}</span>
+              <span class="p-badge ${p.logged_in ? 'ok' : ''}">${p.logged_in ? '✓ ' + emailLabel : 'Needs Google Login'}</span>
+              <span class="p-badge ${p.is_worker_active ? 'sync' : ''}">${p.is_worker_active ? '⚡ Active Worker' : (p.logged_in ? 'Ready (Canvas & Flow)' : 'Offline')}</span>
             </div>
           </div>
         </div>
         <div class="profile-row-actions">
           ${p.is_login_open
-            ? `<button type="button" class="btn-prof-action success" data-prof-action="save-close" data-id="${p.id}">✅ Save &amp; Close</button>`
-            : `<button type="button" class="btn-prof-action primary" data-prof-action="login" data-id="${p.id}">🔑 Login Chrome</button>`
+            ? `<button type="button" class="btn-prof-action success" data-prof-action="save-close" data-id="${p.id}">✅ Done / Refresh</button>`
+            : `<button type="button" class="btn-prof-action primary" data-prof-action="login" data-id="${p.id}">🔑 Login (${state.engine === 'google-flow' ? 'Flow' : 'Gemini'})</button>`
           }
+          ${p.is_worker_active ? `<button type="button" class="btn-prof-action" data-prof-action="focus" data-id="${p.id}" title="Bring background Chrome to front">👁️</button>` : ''}
+          <button type="button" class="btn-prof-action" data-prof-action="folder" data-id="${p.id}" title="Open Chrome profile folder">📁</button>
           <button type="button" class="btn-prof-action danger" data-prof-action="reset" data-id="${p.id}" title="Clear session cookies">🗑️</button>
         </div>
       `;
@@ -258,13 +268,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const action = btn.dataset.profAction;
 
       if (action === 'login') {
-        showToast(`Opening Chrome login window for ${pid}...`);
+        showToast(`Opening real Chrome for ${pid} (${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'})...`);
         await apiJson(`/api/profiles/${pid}/login`, 'POST', { engine: state.engine });
         refreshProfiles();
       } else if (action === 'save-close') {
         await apiJson(`/api/profiles/${pid}/close-login`, 'POST');
-        showToast(`Saved session for ${pid}`);
+        showToast(`Saved & verified session for ${pid}`);
         refreshProfiles();
+      } else if (action === 'focus') {
+        await apiJson(`/api/profiles/${pid}/focus`, 'POST');
+      } else if (action === 'folder') {
+        await apiJson(`/api/profiles/${pid}/open-folder`, 'POST');
       } else if (action === 'reset') {
         if (confirm(`Reset saved cookies & session for ${pid}?`)) {
           await apiJson(`/api/profiles/${pid}`, 'DELETE');
@@ -287,6 +301,31 @@ document.addEventListener('DOMContentLoaded', () => {
       await apiJson('/api/profiles', 'POST');
       showToast('Added new Chrome profile slot');
       refreshProfiles();
+    });
+  }
+
+  if (btnOpenAllUnlogged) {
+    btnOpenAllUnlogged.addEventListener('click', async () => {
+      showToast('Opening Chrome login windows for all unlogged accounts...');
+      const res = await apiJson('/api/profiles/open-all', 'POST', { engine: state.engine });
+      showToast(res?.message || 'Opened unlogged profiles');
+      refreshProfiles();
+    });
+  }
+
+  if (btnImportProProfiles) {
+    btnImportProProfiles.addEventListener('click', async () => {
+      showToast('Importing signed-in profiles from RenderX Studio Pro...');
+      const res = await apiJson('/api/profiles/import-pro', 'POST');
+      showToast(res?.message || 'Import complete');
+      refreshProfiles();
+    });
+  }
+
+  if (btnRefreshProfiles) {
+    btnRefreshProfiles.addEventListener('click', async () => {
+      await refreshProfiles();
+      showToast('Profiles & Google login cookies refreshed');
     });
   }
 
@@ -695,7 +734,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const resp = await apiJson('/api/batch/start', 'POST', {
       items: state.items,
       engine: state.engine,
-      subMode: state.subMode
+      subMode: state.subMode,
+      charImageBase64: (charToggle && charToggle.checked && state.charImageBase64) ? state.charImageBase64 : null,
+      styleImageBase64: (styleToggle && styleToggle.checked && state.styleImageBase64) ? state.styleImageBase64 : null
     });
     if (!resp || !resp.success) {
       showToast(resp?.error || 'Could not start batch');
