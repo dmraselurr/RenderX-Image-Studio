@@ -278,6 +278,12 @@
         </div>
 
         <div class="canvas-actions">
+          <button type="button" class="btn-gallery-action warning" id="btnRetryFailedBatch" disabled title="Regenerate all failed shots cleanly and update cards">
+            <span>🔄 Regenerate Failed</span>
+          </button>
+          <button type="button" class="btn-gallery-action" id="btnRefreshWorkflow" title="Refresh workflow to default mode (keeps left-side prompts intact)">
+            <span>🔁 Refresh</span>
+          </button>
           <button type="button" class="btn-gallery-action danger" id="clearGalleryBtn" title="Reset Gallery to Standby">
             <span>🗑️ Reset Shoot Gallery</span>
           </button>
@@ -317,10 +323,6 @@
                 <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="1">🎲 Re-Roll</button>
                 <button type="button" class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
               </div>
-              <div class="card-check-row">
-                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-                <label class="check-label"><input type="checkbox"> Auto Merge</label>
-              </div>
             </div>
           </div>
 
@@ -345,10 +347,6 @@
                 <button type="button" class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
                 <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="2">🎲 Re-Roll</button>
                 <button type="button" class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
-              </div>
-              <div class="card-check-row">
-                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-                <label class="check-label"><input type="checkbox"> Auto Merge</label>
               </div>
             </div>
           </div>
@@ -375,10 +373,6 @@
                 <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="3">🎲 Re-Roll</button>
                 <button type="button" class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
               </div>
-              <div class="card-check-row">
-                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-                <label class="check-label"><input type="checkbox"> Auto Merge</label>
-              </div>
             </div>
           </div>
 
@@ -403,10 +397,6 @@
                 <button type="button" class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
                 <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="4">🎲 Re-Roll</button>
                 <button type="button" class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
-              </div>
-              <div class="card-check-row">
-                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-                <label class="check-label"><input type="checkbox"> Auto Merge</label>
               </div>
             </div>
           </div>
