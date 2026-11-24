@@ -1,22 +1,89 @@
 /**
- * RenderX Image Studio - Resilient Gemini Canvas Automation Content Script
- * Injected into https://gemini.google.com/*
- * Snapshot-Diff DOM Image Capture & Angular/Quill Interaction Engine
+ * RenderX Image Studio - Gemini Canvas Automation Content Script
+ * Injected strictly into isolated Gemini Canvas worker tabs (https://gemini.google.com/*)
+ * forceRealClick + Snapshot-Diff + Persistent MutationObserver + SW Base64 Collector
  */
 
 (function () {
-  window.__renderexLoaded = true;
+  if (window.__renderexCanvasLoaded) return;
+  window.__renderexCanvasLoaded = true;
   console.log('[RenderX Canvas] Automation script initialized on:', window.location.href);
 
+  // Persistent tab-level image tracking & observer
+  const tabCapturedSrcs = new Set();
+  const streamCallbacks = new Set();
+  let persistentObserver = null;
+
   /**
-   * Resilient Input Box Selector for Gemini Quill / TipTap rich-textarea
+   * Real Pointer Click with Bounding-Box Coordinates
+   * Dispatches pointerdown -> mousedown -> pointerup -> mouseup -> click
+   */
+  function forceRealClick(el) {
+    if (!el) return false;
+    try {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    } catch (e) {}
+
+    const rect = el.getBoundingClientRect();
+    const clientX = rect.left + (rect.width / 2);
+    const clientY = rect.top + (rect.height / 2);
+
+    const pointerOpts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1
+    };
+    const mouseOpts = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX,
+      clientY,
+      button: 0,
+      buttons: 1
+    };
+
+    el.dispatchEvent(new PointerEvent('pointerdown', pointerOpts));
+    el.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+    el.dispatchEvent(new PointerEvent('pointerup', { ...pointerOpts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseup', { ...mouseOpts, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('click', { ...mouseOpts, buttons: 0 }));
+    return true;
+  }
+
+  function ensurePersistentObserver() {
+    if (persistentObserver) return;
+    const notifyStream = () => {
+      streamCallbacks.forEach(cb => {
+        try { cb(); } catch (e) {}
+      });
+    };
+    persistentObserver = new MutationObserver(notifyStream);
+    if (document.body) {
+      persistentObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src']
+      });
+    }
+  }
+
+  /**
+   * Resilient Input Box Selector for Gemini Quill / ContentEditable
    */
   function findInputBox() {
     const selectors = [
       'div.ql-editor[contenteditable="true"]',
+      'div[role="textbox"][contenteditable="true"]',
       'rich-textarea div[contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]',
-      'rich-textarea p',
       'div[contenteditable="true"]',
       'textarea[aria-label*="prompt" i]',
       'textarea'
@@ -57,7 +124,8 @@
       const label = (b.getAttribute('aria-label') || '').toLowerCase();
       const title = (b.getAttribute('title') || '').toLowerCase();
       const text = (b.innerText || b.textContent || '').toLowerCase();
-      return (label.includes('send') || title.includes('send') || text.includes('send'));
+      return (label.includes('send') || title.includes('send') || text.includes('send')) &&
+        (b.offsetParent !== null || b.getClientRects().length > 0);
     }) || null;
   }
 
@@ -73,82 +141,100 @@
     return set;
   }
 
-  /**
-   * Fetch image as Base64 Data URL (CORS-free within Gemini's host origin)
-   */
-  async function fetchImageAsBase64(imgElement) {
-    const src = imgElement.src || imgElement.currentSrc;
-    if (src && src.startsWith('data:image')) return src;
+  async function blobUrlToDataUrl(blobUrl) {
+    const resp = await fetch(blobUrl);
+    const blob = await resp.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('FileReader blob conversion failed'));
+      reader.readAsDataURL(blob);
+    });
+  }
 
-    // Method 1: Offscreen Canvas drawImage
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = imgElement.naturalWidth || imgElement.width || 1024;
-      canvas.height = imgElement.naturalHeight || imgElement.height || 1024;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(imgElement, 0, 0);
-      const dataUrl = canvas.toDataURL('image/png');
-      if (dataUrl && dataUrl.length > 500) return dataUrl;
-    } catch (e) {
-      console.warn('[RenderX Canvas] Canvas extraction CORS note:', e.message);
-    }
-
-    // Method 2: Fetch using active browser session credentials
-    try {
-      const resp = await fetch(src, {
-        method: 'GET',
-        credentials: 'include',
-        headers: { 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const blob = await resp.blob();
-
-      return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error('FileReader failed'));
-        reader.readAsDataURL(blob);
-      });
-    } catch (err) {
-      throw new Error(`Failed to capture image Base64: ${err.message}`);
-    }
+  async function fallbackCanvasBase64(imgElement) {
+    const canvas = document.createElement('canvas');
+    canvas.width = imgElement.naturalWidth || imgElement.width || 1024;
+    canvas.height = imgElement.naturalHeight || imgElement.height || 1024;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgElement, 0, 0);
+    return canvas.toDataURL('image/png');
   }
 
   /**
-   * Inject prompt and trigger generation
+   * Send image URL to background.js SW for CORS-free Base64 conversion & batch deduplication
    */
-  async function executeTurn(sanitizedPrompt, shotIndex = 1, options = {}) {
+  async function requestBase64FromSW(shotIndex, imgElement, rawSrc) {
+    let imageUrl = rawSrc;
+    if (rawSrc.startsWith('blob:')) {
+      try {
+        imageUrl = await blobUrlToDataUrl(rawSrc);
+      } catch (e) {
+        imageUrl = await fallbackCanvasBase64(imgElement);
+      }
+    }
+
+    return await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(
+        { action: 'FETCH_IMAGE_BASE64', shotIndex, imageUrl },
+        async (res) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          if (res && res.success && res.dataUrl) {
+            resolve(res.dataUrl);
+            return;
+          }
+          if (res && (res.duplicate || res.alreadyDone)) {
+            reject(Object.assign(new Error(res.error || 'Duplicate'), { isDuplicate: true }));
+            return;
+          }
+          // Fallback canvas extraction if SW fetch blocked
+          try {
+            const fallbackUrl = await fallbackCanvasBase64(imgElement);
+            resolve(fallbackUrl);
+          } catch (fbErr) {
+            reject(new Error(res?.error || fbErr.message));
+          }
+        }
+      );
+    });
+  }
+
+  /**
+   * Execute single Gemini Canvas image generation turn
+   */
+  async function executeTurn(sanitizedPrompt, shotIndex = 1) {
+    ensurePersistentObserver();
     console.log(`[RenderX Canvas] Starting Shot #${shotIndex}:`, sanitizedPrompt.slice(0, 60));
 
-    // 1. Take snapshot of existing images
+    // 1. Snapshot existing img.src URLs
     const preInjectionSrcs = snapshotExistingImageSrcs();
-    console.log(`[RenderX Canvas] Pre-injection snapshot: ${preInjectionSrcs.size} images`);
 
-    // 2. Locate input box (with up to 15 retries for SPA render)
+    // 2. Focus div.ql-editor[contenteditable="true"] or div[role="textbox"][contenteditable="true"]
     let inputBox = findInputBox();
     if (!inputBox) {
       for (let i = 0; i < 15; i++) {
-        await new Promise(r => setTimeout(r, 400));
+        await new Promise(r => setTimeout(r, 350));
         inputBox = findInputBox();
         if (inputBox) break;
       }
     }
 
     if (!inputBox) {
-      throw new Error('Gemini input box not found. Ensure gemini.google.com/app is open and active.');
+      throw new Error('Gemini input box not found on worker tab.');
     }
 
-    // 3. Format full prompt text with explicit instruction for Imagen 3
-    const fullPromptText = sanitizedPrompt.toLowerCase().startsWith('generate an image') ||
-                           sanitizedPrompt.toLowerCase().startsWith('create an image')
+    // 3. Insert "Generate an image: " + sanitizedPrompt
+    const lower = sanitizedPrompt.toLowerCase();
+    const fullPromptText = (lower.startsWith('generate an image') || lower.startsWith('create an image'))
       ? sanitizedPrompt
       : `Generate an image: ${sanitizedPrompt}`;
 
-    // 4. Focus and cleanly inject text into Quill/Angular editor
     inputBox.focus();
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 80));
 
-    // Clear existing text safely
     try {
       const range = document.createRange();
       const sel = window.getSelection();
@@ -160,14 +246,12 @@
       inputBox.innerText = '';
     }
 
-    // Insert text via execCommand (Quill natively detects this!)
     let inserted = false;
     try {
       inserted = document.execCommand('insertText', false, fullPromptText);
     } catch (e) {}
 
-    // Fallback if execCommand was not accepted by browser
-    if (!inserted || !inputBox.textContent.includes(sanitizedPrompt.slice(0, 15))) {
+    if (!inserted || !inputBox.textContent.includes(sanitizedPrompt.slice(0, 12))) {
       let p = inputBox.querySelector('p');
       if (!p) {
         p = document.createElement('p');
@@ -176,20 +260,21 @@
       p.textContent = fullPromptText;
     }
 
-    // Dispatch comprehensive input events to trigger Angular validation
-    inputBox.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: fullPromptText }));
-    inputBox.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: fullPromptText }));
-    inputBox.dispatchEvent(new Event('input', { bubbles: true }));
+    inputBox.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: fullPromptText
+    }));
     inputBox.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // Wait 500ms for Angular / Lit to re-render button states
-    await new Promise(r => setTimeout(r, 500));
+    // 4. Wait 150ms and trigger forceRealClick on enabled Send button + Enter
+    await new Promise(r => setTimeout(r, 150));
 
-    // 5. Locate and click Send button
     let sendBtn = findSendButton();
     if (!sendBtn) {
       for (let i = 0; i < 6; i++) {
-        await new Promise(r => setTimeout(r, 250));
+        await new Promise(r => setTimeout(r, 150));
         sendBtn = findSendButton();
         if (sendBtn) break;
       }
@@ -201,87 +286,92 @@
         sendBtn.setAttribute('aria-disabled', 'false');
         sendBtn.classList.remove('disabled');
       }
-      sendBtn.click();
-      console.log('[RenderX Canvas] Clicked Gemini Send button');
+      forceRealClick(sendBtn);
     }
 
-    // Fallback Enter key dispatch
-    inputBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-    inputBox.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    inputBox.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      keyCode: 13,
+      which: 13,
+      bubbles: true,
+      cancelable: true
+    }));
 
-    console.log('[RenderX Canvas] Prompt submitted. Monitoring for rendered image tile...');
-
-    // 6. Monitor for new rendered image via MutationObserver + Polling (35s timeout)
+    // 5. Monitor via Persistent MutationObserver + Polling for newly rendered img (naturalWidth > 256)
     return new Promise((resolve, reject) => {
       let isResolved = false;
-      let observer = null;
+      let isChecking = false;
 
       const deadline = setTimeout(() => {
         cleanup();
-        reject(new Error('Gemini generation timed out waiting for image tile (35s).'));
-      }, 35000);
+        reject(new Error('Gemini generation timed out waiting for image (naturalWidth > 256).'));
+      }, 42000);
+
+      async function scanImages() {
+        if (isResolved || isChecking) return;
+        isChecking = true;
+
+        try {
+          const imgs = Array.from(document.querySelectorAll('img'));
+          for (const img of imgs) {
+            const src = img.currentSrc || img.src;
+            if (!src) continue;
+            if (preInjectionSrcs.has(src) || tabCapturedSrcs.has(src)) continue;
+
+            const lowerSrc = src.toLowerCase();
+            if (lowerSrc.includes('profile') || lowerSrc.includes('avatar') ||
+                lowerSrc.includes('emoji') || lowerSrc.includes('icon') ||
+                lowerSrc.includes('logo') || lowerSrc.includes('favicon')) {
+              continue;
+            }
+
+            if (img.complete && img.naturalWidth > 256) {
+              tabCapturedSrcs.add(src);
+              try {
+                const dataUrl = await requestBase64FromSW(shotIndex, img, src);
+                isResolved = true;
+                cleanup();
+                resolve({
+                  success: true,
+                  action: 'SHOT_COMPLETED',
+                  shotIndex,
+                  mediaType: 'image',
+                  dataUrl,
+                  imageUrl: src
+                });
+                return;
+              } catch (err) {
+                if (err.isDuplicate) {
+                  // Already captured by another retry/worker; keep watching for next new image
+                  continue;
+                }
+                tabCapturedSrcs.delete(src);
+                isResolved = true;
+                cleanup();
+                reject(err);
+                return;
+              }
+            }
+          }
+        } finally {
+          isChecking = false;
+        }
+      }
+
+      const pollTimer = setInterval(scanImages, 600);
+      streamCallbacks.add(scanImages);
 
       function cleanup() {
-        if (observer) {
-          observer.disconnect();
-          observer = null;
-        }
+        streamCallbacks.delete(scanImages);
+        clearInterval(pollTimer);
         clearTimeout(deadline);
       }
-
-      async function checkForNewImage() {
-        if (isResolved) return;
-
-        const imgs = Array.from(document.querySelectorAll('img'));
-        for (const img of imgs) {
-          const src = img.src || img.currentSrc;
-          if (!src) continue;
-
-          // Must be NEW (not in pre-existing set)
-          if (preInjectionSrcs.has(src)) continue;
-
-          // Filter out user avatars, icons, emojis
-          const isAvatar = src.includes('profile') || src.includes('avatar') || src.includes('emoji') || src.includes('icon') || src.includes('logo');
-          if (isAvatar) continue;
-
-          const w = img.naturalWidth || img.width || 0;
-          const h = img.naturalHeight || img.height || 0;
-
-          // Check if image is rendered and loaded
-          if ((w > 200 || h > 200 || src.includes('googleusercontent.com')) && img.complete) {
-            isResolved = true;
-            cleanup();
-
-            console.log(`[RenderX Canvas] Shot #${shotIndex} image captured successfully!`);
-            try {
-              const dataUrl = await fetchImageAsBase64(img);
-              resolve({
-                success: true,
-                action: 'SHOT_COMPLETED',
-                shotIndex,
-                mediaType: 'image',
-                dataUrl,
-                prompt: sanitizedPrompt
-              });
-            } catch (err) {
-              reject(err);
-            }
-            return;
-          }
-        }
-      }
-
-      observer = new MutationObserver(() => checkForNewImage());
-      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
-
-      const pollTimer = setInterval(() => {
-        if (isResolved) clearInterval(pollTimer);
-        else checkForNewImage();
-      }, 800);
     });
   }
 
-  // Runtime Message Listener
+  ensurePersistentObserver();
+
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'PING') {
       sendResponse({ status: 'READY', mode: 'gemini-canvas', url: window.location.href });
@@ -289,11 +379,10 @@
     }
 
     if (request.type === 'GENERATE_CANVAS_TURN') {
-      executeTurn(request.prompt, request.shotIndex || 1, request.options || {})
+      executeTurn(request.prompt, request.shotIndex || 1)
         .then(result => sendResponse(result))
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true;
     }
   });
-
 })();
