@@ -1,7 +1,7 @@
 /**
  * RenderX Image Studio - 70%-Width In-Browser Dock Injector
- * Mounts #renderx-browser-dock fixed to the right 70vw of the active tab,
- * keeping the left 30vw unobstructed with a collapse/expand toggle handle.
+ * Always mounts #renderx-browser-dock fixed to the right 70vw of the viewport,
+ * leaving the left 30vw completely unobstructed for the live Google session.
  */
 
 (function () {
@@ -51,21 +51,22 @@
     height: '100vh',
     zIndex: '2147483647',
     backgroundColor: '#05070B',
-    borderLeft: '1px solid #1E293B',
-    boxShadow: '-10px 0 36px rgba(0, 0, 0, 0.8)',
+    borderLeft: '2px solid #1E293B',
+    boxShadow: '-10px 0 36px rgba(0, 0, 0, 0.82)',
     overflowY: 'auto',
     overflowX: 'hidden',
     scrollBehavior: 'smooth',
+    overscrollBehavior: 'contain',
     transition: 'transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)',
     margin: '0',
     padding: '0',
     boxSizing: 'border-box'
   });
 
-  // Create dashboard.html iframe with smooth vertical scroll support
+  // Create dashboard.html iframe filling 100% of the 70vw dock
   const iframe = document.createElement('iframe');
   iframe.id = IFRAME_ID;
-  iframe.src = chrome.runtime.getURL('dashboard.html');
+  iframe.src = chrome.runtime.getURL('dashboard.html?docked=1');
   iframe.setAttribute('scrolling', 'yes');
   iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
   Object.assign(iframe.style, {
