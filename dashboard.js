@@ -32,6 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnEngineVerifyOk = $('btnEngineVerifyOk');
   const engineOkLabel = $('engineOkLabel');
   const engineActiveBadge = $('engineActiveBadge');
+  const projectNameInput = $('projectNameInput');
+  const createProjectToggle = $('createProjectToggle');
   const clusterStateText = $('clusterStateText');
   const clusterProfileName = $('clusterProfileName');
   const btnManageProfiles = $('btnManageProfiles');
@@ -632,6 +634,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Reset gallery to standby without touching promptsTextarea!
       resetGalleryToStandby();
+      updateDiagnosticLine('Timeline Ordered: Standby Ready', false);
 
       // Reset engine & workflow options to Default Mode
       state.subMode = 'image';
@@ -834,6 +837,8 @@ document.addEventListener('DOMContentLoaded', () => {
       items: state.items,
       engine: state.engine,
       subMode: state.subMode,
+      projectName: (projectNameInput && projectNameInput.value.trim()) ? projectNameInput.value.trim() : 'RenderX_Project_01',
+      createNewProject: createProjectToggle ? Boolean(createProjectToggle.checked) : true,
       negPrompt: negPrompt || null,
       charDesc: charPrompt || null,
       styleDesc: stylePrompt || null,
