@@ -813,14 +813,16 @@ async def run_canvas_profile_worker(
                 await gen_btn.click()
                 await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Canvas batch started ({len(group_items)} prompts) — streaming live..."})
 
-                # Live poll #image-grid tiles as Gemini Canvas completes each prompt concurrently
+                # Live poll #image-grid tiles as Gemini Canvas completes or fails each prompt concurrently
                 done_slots = set()
+                failed_slots = set()
+                retried_canvas_once = False
                 max_wait_sec = max(240, len(group_items) * 20)
                 start_ts = time.time()
                 started_generating = False
 
                 while time.time() - start_ts < max_wait_sec and not state.should_stop:
-                    await asyncio.sleep(1.3)
+                    await asyncio.sleep(1.2)
 
                     try:
                         stop_vis = await frame.locator("#stop-btn").is_visible()
@@ -829,14 +831,15 @@ async def run_canvas_profile_worker(
                     if stop_vis:
                         started_generating = True
 
-                    # Extract any newly completed rendered images from #image-grid in exact card order
-                    extracted = await frame.evaluate("""async (alreadyDone) => {
+                    # Inspect #image-grid cards for completed images AND instant failure states
+                    extracted = await frame.evaluate("""async (skipDone, skipFailed) => {
                         const grid = document.querySelector('#image-grid');
-                        if (!grid) return { tiles: [], totalCards: 0 };
+                        if (!grid) return { tiles: [], failed: [], totalCards: 0 };
                         const cards = Array.from(grid.children);
                         const out = [];
+                        const fails = [];
                         for (let i = 0; i < cards.length; i++) {
-                            if (alreadyDone.includes(i)) continue;
+                            if (skipDone.includes(i)) continue;
                             const img = cards[i].querySelector('img');
                             if (img && img.src && img.complete && (img.naturalWidth > 64 || img.width > 64)) {
                                 try {
@@ -847,26 +850,39 @@ async def run_canvas_profile_worker(
                                         fr.onloadend = () => res(fr.result);
                                         fr.readAsDataURL(b);
                                     });
-                                    out.push({ slot: i, ok: true, dataUrl: b64 });
+                                    out.push({ slot: i, dataUrl: b64 });
+                                    continue;
                                 } catch (e) {
                                     try {
                                         const c = document.createElement('canvas');
                                         c.width = img.naturalWidth || 1024;
                                         c.height = img.naturalHeight || 1024;
                                         c.getContext('2d').drawImage(img, 0, 0);
-                                        out.push({ slot: i, ok: true, dataUrl: c.toDataURL('image/png') });
+                                        out.push({ slot: i, dataUrl: c.toDataURL('image/png') });
+                                        continue;
                                     } catch (e2) {}
                                 }
                             }
+                            if (!skipFailed.includes(i)) {
+                                const txt = (cards[i].innerText || '').trim();
+                                const low = txt.toLowerCase();
+                                if (/(failed|error|refused|blocked|unable|safety|try again)/.test(low)) {
+                                    fails.push({ slot: i, error: txt.replace(/\\s+/g, ' ').slice(0, 140) });
+                                }
+                            }
                         }
-                        return { tiles: out, totalCards: cards.length };
-                    }""", list(done_slots))
+                        return { tiles: out, failed: fails, totalCards: cards.length };
+                    }""", list(done_slots), list(failed_slots))
 
                     for tile in extracted.get("tiles", []):
                         slot = tile["slot"]
                         if slot < len(group_items) and slot not in done_slots:
                             done_slots.add(slot)
+                            failed_slots.discard(slot)
                             it = group_items[slot]
+                            # Allow regenerated card to flip cleanly from failed -> done
+                            if it.get("status") == "failed":
+                                it["status"] = "generating"
                             await handle_shot_result(
                                 pid,
                                 {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": tile["dataUrl"]},
@@ -875,13 +891,26 @@ async def run_canvas_profile_worker(
                                 "image",
                             )
 
+                    for ftile in extracted.get("failed", []):
+                        slot = ftile["slot"]
+                        if slot < len(group_items) and slot not in done_slots and slot not in failed_slots:
+                            failed_slots.add(slot)
+                            it = group_items[slot]
+                            await handle_shot_result(
+                                pid,
+                                {"index": it["index"], "ok": False, "httpStatus": 0, "error": ftile.get("error") or "Generation failed in Canvas"},
+                                item_map,
+                                batch_dir,
+                                "image",
+                            )
+
                     if len(done_slots) >= len(group_items):
                         break
 
-                    # If Stop button appeared and then disappeared, Canvas finished initial render
-                    if started_generating and not stop_vis:
-                        await asyncio.sleep(1.8)
-                        # Final sweep for tiles that just finished painting
+                    # If Stop button appeared & disappeared (or fast small batch finished > 10s), sweep final tiles
+                    elapsed = time.time() - start_ts
+                    if (started_generating and not stop_vis) or (not stop_vis and elapsed > 10 and (len(done_slots) + len(failed_slots) >= len(group_items))):
+                        await asyncio.sleep(1.5)
                         final_ext = await frame.evaluate("""async (alreadyDone) => {
                             const grid = document.querySelector('#image-grid');
                             if (!grid) return [];
@@ -909,24 +938,29 @@ async def run_canvas_profile_worker(
                             slot = tile["slot"]
                             if slot < len(group_items) and slot not in done_slots:
                                 done_slots.add(slot)
+                                failed_slots.discard(slot)
                                 it = group_items[slot]
+                                if it.get("status") == "failed":
+                                    it["status"] = "generating"
                                 await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": tile["dataUrl"]}, item_map, batch_dir, "image")
 
-                        # Auto-retry failed tiles once if Canvas shows Select Failed button (bulkgem.py parity)
+                        # Auto-retry failed tiles once if Canvas shows Select Failed button
                         try:
                             sel_fail = frame.locator("#select-failed-btn")
-                            if len(done_slots) < len(group_items) and await sel_fail.count() > 0 and await sel_fail.is_visible():
+                            if not retried_canvas_once and len(done_slots) < len(group_items) and await sel_fail.count() > 0 and await sel_fail.is_visible():
+                                retried_canvas_once = True
                                 await sel_fail.click()
                                 await asyncio.sleep(0.7)
                                 regen = frame.locator("#bulk-regen-btn")
                                 if await regen.count() > 0 and await regen.is_visible():
-                                    await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Retrying failed Canvas tiles automatically..."})
+                                    await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Auto-retrying failed Canvas tiles..."})
                                     await regen.click()
                                     await asyncio.sleep(0.8)
                                     confirm = frame.locator("#confirm-regen-btn")
                                     if await confirm.count() > 0 and await confirm.is_visible():
                                         await confirm.click()
                                     started_generating = False
+                                    failed_slots.clear()
                                     continue
                         except Exception:
                             pass
@@ -1086,43 +1120,110 @@ async def _flow_dismiss_banners(page: Page):
             pass
 
 
-async def _flow_configure(page: Page, aspect_ratio: str = "1:1"):
-    ar_icon = "crop_9_16" if aspect_ratio == "9:16" else ("crop_16_9" if aspect_ratio == "16:9" else "crop_square")
+async def _flow_enable_agent_mode(page: Page) -> bool:
+    """Ensure Google Flow Agent Mode is enabled before configuring & submitting prompts."""
+    agent_selectors = [
+        page.locator('button[aria-label*="Agent" i]:visible'),
+        page.locator('[role="switch"][aria-label*="Agent" i]:visible'),
+        page.locator('button:has-text("Agent"):visible'),
+        page.locator('label:has-text("Agent"):visible'),
+    ]
+    for probe in agent_selectors:
+        try:
+            if await probe.count() > 0:
+                el = probe.first
+                aria_checked = (await el.get_attribute("aria-checked") or "").lower()
+                aria_pressed = (await el.get_attribute("aria-pressed") or "").lower()
+                data_state = (await el.get_attribute("data-state") or "").lower()
+                if aria_checked == "true" or aria_pressed == "true" or data_state == "checked":
+                    return True
+                await el.click(timeout=3000)
+                await asyncio.sleep(0.7)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _flow_click_approve(page: Page) -> bool:
+    """Auto-accept Flow Agent confirmation prompts if shown."""
+    for label in ("Approve", "Confirm", "Yes", "Proceed", "Kick off", "Continue"):
+        try:
+            btn = page.get_by_role("button", name=re.compile(label, re.I))
+            if await btn.count() > 0 and await btn.first.is_visible():
+                await btn.first.click(timeout=2500)
+                await asyncio.sleep(0.6)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+async def _flow_configure(page: Page, aspect_ratio: str = "1:1", is_video: bool = False):
+    """
+    Configure Flow settings matching Studio selection:
+    - Mode: Image (default) or Video
+    - Aspect Ratio: 16:9 Desktop (Landscape), 9:16 Reels (Portrait), or 1:1 Square
+    - Output count: x1 (1 image generated per prompt)
+    """
+    # Step 1: Select Image vs Video mode tab/button
     try:
-        combo = page.locator('button:has-text("crop_16_9"), button:has-text("crop_9_16"), button:has-text("crop_square"), button[aria-label*="crop"]').first
-        if await combo.count() > 0 and await combo.is_visible():
-            await combo.click(timeout=4000)
-            await asyncio.sleep(0.5)
-            for label in (ar_icon, aspect_ratio, "x1", "1"):
-                opt = page.get_by_text(label, exact=True).first
-                if await opt.count() > 0 and await opt.is_visible():
-                    try:
-                        await opt.click(timeout=2500)
-                        await asyncio.sleep(0.3)
-                    except Exception:
-                        pass
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(0.3)
-    except Exception:
-        pass
-
-
-async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 90) -> str:
-    clean_p = sanitize_prompt(item["fullPrompt"])
-    is_video = "video" in sub_mode
-    await _flow_configure(page, item.get("aspectRatio", "1:1"))
-
-    # Select Image vs Video mode if available
-    try:
-        mode_name = "Videos" if is_video else "Images"
-        for cand in (mode_name, "Video" if is_video else "Image"):
+        wanted_modes = ("Videos", "Video") if is_video else ("Images", "Image", "Text to Image")
+        for cand in wanted_modes:
             mbtn = page.get_by_role("button", name=cand, exact=True)
             if await mbtn.count() > 0 and await mbtn.first.is_visible():
-                await mbtn.first.click()
+                await mbtn.first.click(timeout=2500)
                 await asyncio.sleep(0.4)
                 break
     except Exception:
         pass
+
+    # Step 2: Open combined settings menu & apply Ratio + x1 single image output
+    ar_candidates = {
+        "9:16": ("crop_9_16", "9:16", "Portrait", "Portrait (9:16)", "Reels"),
+        "16:9": ("crop_16_9", "16:9", "Landscape", "Landscape (16:9)", "Desktop"),
+        "1:1": ("crop_square", "1:1", "Square", "Square (1:1)"),
+    }.get(aspect_ratio, ("crop_square", "1:1", "Square"))
+
+    try:
+        combo = page.locator(
+            'button:has-text("crop_16_9"):visible, button:has-text("crop_9_16"):visible, '
+            'button:has-text("crop_square"):visible, button[aria-label*="crop" i]:visible, '
+            'button:has-text("x2"):visible, button:has-text("x4"):visible, button:has-text("x1"):visible'
+        ).first
+        if await combo.count() > 0 and await combo.is_visible():
+            await combo.click(timeout=4000)
+            await asyncio.sleep(0.5)
+
+            for cand in ar_candidates:
+                opt = page.get_by_text(cand, exact=True).first
+                if await opt.count() > 0 and await opt.is_visible():
+                    try:
+                        await opt.click(timeout=2500)
+                        await asyncio.sleep(0.3)
+                        break
+                    except Exception:
+                        pass
+
+            for cnt_lbl in ("x1", "×1", "1"):
+                copt = page.get_by_text(cnt_lbl, exact=True).first
+                if await copt.count() > 0 and await copt.is_visible():
+                    try:
+                        await copt.click(timeout=2500)
+                        await asyncio.sleep(0.3)
+                        break
+                    except Exception:
+                        pass
+
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.4)
+    except Exception:
+        pass
+
+
+async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 120) -> str:
+    clean_p = sanitize_prompt(item["fullPrompt"])
+    is_video = "video" in sub_mode
 
     # If image-to-video & reference image provided, upload to Flow
     ref_b64 = item.get("referenceImage") or ""
@@ -1154,19 +1255,23 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
         )
     )
 
-    compose = page.locator('textarea, [contenteditable="true"]').last
+    # IMPORTANT (automate_scenes.py): First textarea on Flow belongs to reCAPTCHA and is invisible; select :visible!
+    compose = page.locator('[contenteditable="true"]:visible, textarea:visible').last
     await compose.wait_for(state="visible", timeout=25000)
     await compose.click()
     try:
         await compose.fill(clean_p)
     except Exception:
         await page.keyboard.press("Control+A")
-        await page.keyboard.type(clean_p)
+        await page.keyboard.type(clean_p, delay=5)
     await asyncio.sleep(0.4)
 
-    # Click Create/Generate button or press Enter
-    create_btn = page.locator('button[aria-label*="Create"], button[aria-label*="Generate"], button:has-text("Create"), button:has-text("Generate")').last
-    if await create_btn.count() > 0 and await create_btn.first.is_visible():
+    # Click Create/Generate/Send button or press Enter
+    create_btn = page.locator(
+        'button[aria-label*="Create" i]:visible, button[aria-label*="Generate" i]:visible, '
+        'button:has-text("Create"):visible, button:has-text("Generate"):visible, button[aria-label*="Send" i]:visible'
+    ).last
+    if await create_btn.count() > 0 and await create_btn.is_visible():
         await create_btn.first.click()
     else:
         await compose.press("Enter")
@@ -1175,6 +1280,7 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
     while time.time() < deadline and not state.should_stop:
         await asyncio.sleep(1.5)
         await _flow_dismiss_banners(page)
+        await _flow_click_approve(page)
         now_items = await page.evaluate(f"""async () => {{
             const els = Array.from(document.querySelectorAll('{media_sel}'));
             return els.map(el => ({{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200 }}));
@@ -1243,6 +1349,16 @@ async def run_flow_profile_worker(
             except Exception:
                 pass
 
+            # Step 1: Activate Flow Agent Mode + configure x1 single-image & selected aspect ratio
+            agent_on = await _flow_enable_agent_mode(page)
+            first_ar = assigned_items[0].get("aspectRatio", "1:1") if assigned_items else "1:1"
+            is_video = "video" in sub_mode
+            await _flow_configure(page, first_ar, is_video=is_video)
+            await broadcast_ws({
+                "type": "DIAGNOSTIC_LOG",
+                "text": f"[{pid}] Google Flow ready ({'Agent Mode ON, ' if agent_on else ''}Ratio {first_ar}, x1 per prompt)"
+            })
+
             async def on_shot_done(res):
                 await handle_shot_result(pid, res, item_map, batch_dir, sub_mode)
 
@@ -1251,45 +1367,21 @@ async def run_flow_profile_worker(
             except Exception:
                 pass
 
-            remaining = list(assigned_items)
-            first = remaining.pop(0)
-            await broadcast_ws({"type": "ITEM_STARTED", "index": first["index"]})
-            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Submitting Shot #{first['index']} inside Google Flow..."})
-
-            first_media = await _flow_submit_ui_shot(page, first, sub_mode, timeout_sec=120)
-            await handle_shot_result(pid, {"index": first["index"], "ok": True, "httpStatus": 200, "dataUrl": first_media}, item_map, batch_dir, sub_mode)
-
-            # Fast parallel API replay if live Bearer + payload was captured; fallback to Flow UI per-shot otherwise
-            if remaining and not state.should_stop:
-                if captured.get("url") and captured.get("body") and "video" not in sub_mode:
-                    for it in remaining:
-                        await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-                    eval_items = [
-                        {"index": it["index"], "prompt": sanitize_prompt(it["fullPrompt"]), "aspectRatio": it.get("aspectRatio", "1:1")}
-                        for it in remaining
-                    ]
-                    api_results = await page.evaluate(FLOW_EVAL_BATCH_JS, {"items": eval_items, "template": captured})
-                    failed_fallback = [it for it in remaining if not any(r.get("index") == it["index"] and r.get("ok") for r in api_results)]
-                    # Fallback sequentially in Flow UI for any shot blocked by reCAPTCHA/API check
-                    for it in failed_fallback:
-                        if state.should_stop or it.get("status") == "done":
-                            continue
-                        it["status"] = "generating"
-                        try:
-                            m = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
-                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": m}, item_map, batch_dir, sub_mode)
-                        except Exception as e2:
-                            await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(e2)}, item_map, batch_dir, sub_mode)
-                else:
-                    for it in remaining:
-                        if state.should_stop:
-                            break
-                        await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-                        try:
-                            m = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
-                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": m}, item_map, batch_dir, sub_mode)
-                        except Exception as e2:
-                            await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(e2)}, item_map, batch_dir, sub_mode)
+            # Submit all assigned prompts continuously in Flow Agent workspace, streaming each completed asset to Studio
+            last_ar = first_ar
+            for it in assigned_items:
+                if state.should_stop:
+                    break
+                cur_ar = it.get("aspectRatio", "1:1")
+                if cur_ar != last_ar:
+                    await _flow_configure(page, cur_ar, is_video=is_video)
+                    last_ar = cur_ar
+                await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+                try:
+                    media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
+                    await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
+                except Exception as shot_err:
+                    await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
 
         except Exception as err:
             for it in assigned_items:
@@ -1611,10 +1703,30 @@ class BatchStartReq(BaseModel):
     items: List[Dict[str, Any]]
     engine: str = "gemini-canvas"
     subMode: str = "image"
+    isRetry: bool = False
     charDesc: Optional[str] = None
     styleDesc: Optional[str] = None
     charImageBase64: Optional[str] = None
     styleImageBase64: Optional[str] = None
+
+
+@app.get("/api/batch/state")
+async def api_batch_state():
+    return {
+        "success": True,
+        "isRunning": state.is_running,
+        "items": [
+            {
+                "index": it.get("index"),
+                "status": it.get("status"),
+                "dataUrl": it.get("dataUrl"),
+                "mediaType": it.get("mediaType", "image"),
+                "error": it.get("error", ""),
+                "filename": it.get("filename", ""),
+            }
+            for it in state.current_items
+        ],
+    }
 
 
 class EngineCheckReq(BaseModel):
@@ -1683,18 +1795,29 @@ async def api_batch_start(req: BatchStartReq):
 
     state.is_running = True
     state.should_stop = False
-    state.current_items = req.items
     state.current_engine = req.engine
     state.current_sub_mode = req.subMode
 
-    batch_stamp = time.strftime("batch_%Y%m%d_%H%M%S")
-    batch_dir = OUTPUTS_DIR / batch_stamp
-    batch_dir.mkdir(parents=True, exist_ok=True)
+    if req.isRetry and state.current_items:
+        retry_map = {it["index"]: it for it in req.items}
+        for i, existing in enumerate(state.current_items):
+            if existing["index"] in retry_map:
+                state.current_items[i] = retry_map[existing["index"]]
+        batch_dir = state.last_batch_dir if state.last_batch_dir.exists() else (OUTPUTS_DIR / time.strftime("batch_%Y%m%d_%H%M%S"))
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        work_items = req.items
+    else:
+        state.current_items = req.items
+        batch_stamp = time.strftime("batch_%Y%m%d_%H%M%S")
+        batch_dir = OUTPUTS_DIR / batch_stamp
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        work_items = state.current_items
+
     state.last_batch_dir = batch_dir
 
     item_map = {it["index"]: it for it in state.current_items}
     buckets: Dict[str, List[Dict[str, Any]]] = {p["id"]: [] for p in active_profiles}
-    for i, item in enumerate(state.current_items):
+    for i, item in enumerate(work_items):
         chosen = active_profiles[i % len(active_profiles)]
         buckets[chosen["id"]].append(item)
 
