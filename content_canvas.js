@@ -1,22 +1,22 @@
 /**
- * RenderX Image Studio - Gemini Canvas Account-Level Content Script
+ * RenderX Image Studio - Resilient Gemini Canvas Automation Content Script
  * Injected into https://gemini.google.com/*
- * Snapshot-Diff DOM Image Capture & Resilient Interaction Engine
+ * Snapshot-Diff DOM Image Capture & Angular/Quill Interaction Engine
  */
 
 (function () {
-  // Idempotency guard to prevent double-injection
   window.__renderexLoaded = true;
-  console.log('[RenderX Canvas] Content script active on:', window.location.href);
+  console.log('[RenderX Canvas] Automation script initialized on:', window.location.href);
 
   /**
-   * Resilient Input Box Selector
+   * Resilient Input Box Selector for Gemini Quill / TipTap rich-textarea
    */
   function findInputBox() {
     const selectors = [
       'div.ql-editor[contenteditable="true"]',
-      'div[contenteditable="true"][role="textbox"]',
       'rich-textarea div[contenteditable="true"]',
+      'div[contenteditable="true"][role="textbox"]',
+      'rich-textarea p',
       'div[contenteditable="true"]',
       'textarea[aria-label*="prompt" i]',
       'textarea'
@@ -36,65 +36,51 @@
    */
   function findSendButton() {
     const selectors = [
-      'button[aria-label*="Send" i]:not([disabled])',
-      'button[aria-label*="Submit" i]:not([disabled])',
-      'button.send-button:not([disabled])',
-      'button[jsname="send_button"]:not([disabled])',
-      'button[data-tooltip*="Send" i]:not([disabled])'
+      'button[aria-label*="Send" i]',
+      'button.send-button',
+      'div[class*="send-button-container"] button',
+      'button[jsname="send_button"]',
+      'button[data-tooltip*="Send" i]',
+      'rich-textarea ~ button',
+      'div.input-area button[aria-label*="Send" i]'
     ];
 
     for (const sel of selectors) {
       const btn = document.querySelector(sel);
-      if (btn && !btn.disabled && (btn.offsetParent !== null || btn.getClientRects().length > 0)) {
+      if (btn && (btn.offsetParent !== null || btn.getClientRects().length > 0)) {
         return btn;
       }
     }
 
-    const allButtons = Array.from(document.querySelectorAll('button:not([disabled])'));
+    const allButtons = Array.from(document.querySelectorAll('button'));
     return allButtons.find(b => {
       const label = (b.getAttribute('aria-label') || '').toLowerCase();
       const title = (b.getAttribute('title') || '').toLowerCase();
-      return (label.includes('send') || title.includes('send'));
+      const text = (b.innerText || b.textContent || '').toLowerCase();
+      return (label.includes('send') || title.includes('send') || text.includes('send'));
     }) || null;
-  }
-
-  /**
-   * Check if generation is in progress (Stop response button visible)
-   */
-  function isGenerating() {
-    const stopSelectors = [
-      'button[aria-label*="Stop" i]',
-      'button.stop-button',
-      'button[data-tooltip*="Stop" i]'
-    ];
-    for (const sel of stopSelectors) {
-      const btn = document.querySelector(sel);
-      if (btn && btn.offsetParent !== null) return true;
-    }
-    return false;
   }
 
   /**
    * Snapshot all existing images on the page
    */
-  function getExistingImageSrcs() {
-    const imgs = Array.from(document.querySelectorAll('img'));
+  function snapshotExistingImageSrcs() {
     const set = new Set();
-    for (const img of imgs) {
+    document.querySelectorAll('img').forEach(img => {
       if (img.src) set.add(img.src);
       if (img.currentSrc) set.add(img.currentSrc);
-    }
+    });
     return set;
   }
 
   /**
-   * Fetch image as Base64 Data URL using active browser session credentials (CORS-free)
+   * Fetch image as Base64 Data URL (CORS-free within Gemini's host origin)
    */
   async function fetchImageAsBase64(imgElement) {
     const src = imgElement.src || imgElement.currentSrc;
     if (src && src.startsWith('data:image')) return src;
 
-    // 1. Try canvas drawImage
+    // Method 1: Offscreen Canvas drawImage
     try {
       const canvas = document.createElement('canvas');
       canvas.width = imgElement.naturalWidth || imgElement.width || 1024;
@@ -107,15 +93,16 @@
       console.warn('[RenderX Canvas] Canvas extraction CORS note:', e.message);
     }
 
-    // 2. Fetch via active Google session credentials
+    // Method 2: Fetch using active browser session credentials
     try {
-      const response = await fetch(src, {
+      const resp = await fetch(src, {
         method: 'GET',
         credentials: 'include',
         headers: { 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+
       return await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);
@@ -123,21 +110,21 @@
         reader.readAsDataURL(blob);
       });
     } catch (err) {
-      throw new Error(`Failed to extract image Base64: ${err.message}`);
+      throw new Error(`Failed to capture image Base64: ${err.message}`);
     }
   }
 
   /**
-   * 5. Snapshot-Diff Image Capture & DOM Automation
+   * Inject prompt and trigger generation
    */
   async function executeTurn(sanitizedPrompt, shotIndex = 1, options = {}) {
-    console.log(`[RenderX Canvas] Executing Shot #${shotIndex}:`, sanitizedPrompt.slice(0, 60));
+    console.log(`[RenderX Canvas] Starting Shot #${shotIndex}:`, sanitizedPrompt.slice(0, 60));
 
-    // 1. Record pre-injection Set of all existing images
-    const preInjectionSrcSet = getExistingImageSrcs();
-    console.log(`[RenderX Canvas] Pre-injection image snapshot recorded: ${preInjectionSrcSet.size} images`);
+    // 1. Take snapshot of existing images
+    const preInjectionSrcs = snapshotExistingImageSrcs();
+    console.log(`[RenderX Canvas] Pre-injection snapshot: ${preInjectionSrcs.size} images`);
 
-    // 2. Locate input box with polling
+    // 2. Locate input box (with up to 15 retries for SPA render)
     let inputBox = findInputBox();
     if (!inputBox) {
       for (let i = 0; i < 15; i++) {
@@ -148,48 +135,57 @@
     }
 
     if (!inputBox) {
-      throw new Error('Gemini prompt input box not found. Please ensure gemini.google.com is open and active.');
+      throw new Error('Gemini input box not found. Ensure gemini.google.com/app is open and active.');
     }
 
-    // 3. Focus and clear
-    inputBox.focus();
-    await new Promise(r => setTimeout(r, 200));
+    // 3. Format full prompt text with explicit instruction for Imagen 3
+    const fullPromptText = sanitizedPrompt.toLowerCase().startsWith('generate an image') ||
+                           sanitizedPrompt.toLowerCase().startsWith('create an image')
+      ? sanitizedPrompt
+      : `Generate an image: ${sanitizedPrompt}`;
 
+    // 4. Focus and cleanly inject text into Quill/Angular editor
+    inputBox.focus();
+    await new Promise(r => setTimeout(r, 150));
+
+    // Clear existing text safely
     try {
-      document.execCommand('selectAll', false, null);
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.selectNodeContents(inputBox);
+      sel.removeAllRanges();
+      sel.addRange(range);
       document.execCommand('delete', false, null);
     } catch (e) {
       inputBox.innerText = '';
     }
 
-    // 4. Prepend "Generate an image: " to ensure Gemini activates Imagen 3
-    const fullPromptText = sanitizedPrompt.toLowerCase().startsWith('generate an image')
-      ? sanitizedPrompt
-      : `Generate an image: ${sanitizedPrompt}`;
-
+    // Insert text via execCommand (Quill natively detects this!)
     let inserted = false;
     try {
       inserted = document.execCommand('insertText', false, fullPromptText);
     } catch (e) {}
 
-    if (!inserted || !inputBox.innerText.includes(sanitizedPrompt.slice(0, 20))) {
-      inputBox.innerText = fullPromptText;
+    // Fallback if execCommand was not accepted by browser
+    if (!inserted || !inputBox.textContent.includes(sanitizedPrompt.slice(0, 15))) {
+      let p = inputBox.querySelector('p');
+      if (!p) {
+        p = document.createElement('p');
+        inputBox.appendChild(p);
+      }
+      p.textContent = fullPromptText;
     }
 
-    // Dispatch input events
-    inputBox.dispatchEvent(new InputEvent('input', {
-      bubbles: true,
-      cancelable: true,
-      inputType: 'insertText',
-      data: fullPromptText
-    }));
+    // Dispatch comprehensive input events to trigger Angular validation
+    inputBox.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: fullPromptText }));
+    inputBox.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: fullPromptText }));
     inputBox.dispatchEvent(new Event('input', { bubbles: true }));
     inputBox.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // Wait 600ms for UI to enable send button
-    await new Promise(r => setTimeout(r, 600));
+    // Wait 500ms for Angular / Lit to re-render button states
+    await new Promise(r => setTimeout(r, 500));
 
-    // 5. Click Send Button AND dispatch fallback Enter KeyboardEvent
+    // 5. Locate and click Send button
     let sendBtn = findSendButton();
     if (!sendBtn) {
       for (let i = 0; i < 6; i++) {
@@ -200,24 +196,29 @@
     }
 
     if (sendBtn) {
+      if (sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true') {
+        sendBtn.removeAttribute('disabled');
+        sendBtn.setAttribute('aria-disabled', 'false');
+        sendBtn.classList.remove('disabled');
+      }
       sendBtn.click();
       console.log('[RenderX Canvas] Clicked Gemini Send button');
     }
 
-    // Always dispatch Enter as fallback / reinforcement
-    inputBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    inputBox.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    // Fallback Enter key dispatch
+    inputBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    inputBox.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
 
-    console.log('[RenderX Canvas] Prompt submitted. Monitoring for new image tile...');
+    console.log('[RenderX Canvas] Prompt submitted. Monitoring for rendered image tile...');
 
-    // 6. Wait via MutationObserver + Polling until a NEW high-res <img> renders
+    // 6. Monitor for new rendered image via MutationObserver + Polling (35s timeout)
     return new Promise((resolve, reject) => {
       let isResolved = false;
       let observer = null;
 
-      const deadlineTimer = setTimeout(() => {
+      const deadline = setTimeout(() => {
         cleanup();
-        reject(new Error('Gemini generation timed out waiting for image output (35s).'));
+        reject(new Error('Gemini generation timed out waiting for image tile (35s).'));
       }, 35000);
 
       function cleanup() {
@@ -225,33 +226,33 @@
           observer.disconnect();
           observer = null;
         }
-        clearTimeout(deadlineTimer);
+        clearTimeout(deadline);
       }
 
       async function checkForNewImage() {
         if (isResolved) return;
 
-        const currentImgs = Array.from(document.querySelectorAll('img'));
-        for (const img of currentImgs) {
+        const imgs = Array.from(document.querySelectorAll('img'));
+        for (const img of imgs) {
           const src = img.src || img.currentSrc;
           if (!src) continue;
 
-          // Must be NEW (not in pre-injection set)
-          if (preInjectionSrcSet.has(src)) continue;
+          // Must be NEW (not in pre-existing set)
+          if (preInjectionSrcs.has(src)) continue;
 
-          // Filter out avatars, icons, emojis
-          const isAvatar = src.includes('profile') || src.includes('avatar') || src.includes('emoji') || src.includes('icon');
+          // Filter out user avatars, icons, emojis
+          const isAvatar = src.includes('profile') || src.includes('avatar') || src.includes('emoji') || src.includes('icon') || src.includes('logo');
           if (isAvatar) continue;
 
           const w = img.naturalWidth || img.width || 0;
           const h = img.naturalHeight || img.height || 0;
 
-          // Requirement: naturalWidth > 256 or high-res Google User Content
-          if ((w > 256 || h > 256 || src.includes('googleusercontent.com')) && img.complete) {
+          // Check if image is rendered and loaded
+          if ((w > 200 || h > 200 || src.includes('googleusercontent.com')) && img.complete) {
             isResolved = true;
             cleanup();
 
-            console.log(`[RenderX Canvas] New image captured for Shot #${shotIndex}:`, src.slice(0, 60));
+            console.log(`[RenderX Canvas] Shot #${shotIndex} image captured successfully!`);
             try {
               const dataUrl = await fetchImageAsBase64(img);
               resolve({
@@ -270,24 +271,17 @@
         }
       }
 
-      // MutationObserver monitoring container mutations
-      observer = new MutationObserver(() => {
-        checkForNewImage();
-      });
+      observer = new MutationObserver(() => checkForNewImage());
       observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
 
-      // Polling fallback every 800ms
-      const pollInterval = setInterval(() => {
-        if (isResolved) {
-          clearInterval(pollInterval);
-        } else {
-          checkForNewImage();
-        }
+      const pollTimer = setInterval(() => {
+        if (isResolved) clearInterval(pollTimer);
+        else checkForNewImage();
       }, 800);
     });
   }
 
-  // Runtime message handler
+  // Runtime Message Listener
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'PING') {
       sendResponse({ status: 'READY', mode: 'gemini-canvas', url: window.location.href });
