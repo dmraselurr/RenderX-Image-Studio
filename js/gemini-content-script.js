@@ -1,19 +1,52 @@
 /**
- * RenderX Image Studio - Gemini Canvas Direct Automation Content Script
- * Runs inside all frames on gemini.google.com (including sandboxed Canvas iframe)
+ * RenderX Image Studio - Gemini Canvas Direct Automation Content Script (v1.0.5 PRO)
+ * Runs inside all frames on gemini.google.com, share.gemini.google, and googleusercontent.com
  * Direct DOM automation for Bulk Image Generator app
  */
 
 (function () {
   const isTopFrame = (window.self === window.top);
 
+  // Exact locators matching bulkgem.py and the Canvas app DOM
+  const IDS = {
+    tab_image: "button[data-tab='image']",
+    aspect: "#aspectRatio",
+    cc_toggle: "#ccToggle",
+    cc_panel: "#ccOptionsContainer",
+    cc_text: "textarea.cc-text-input, #ccDesc",
+    cc_image: "input.cc-image-input",
+    sc_toggle: "#scToggle",
+    sc_panel: "#scOptionsContainer",
+    sc_text: "#scText, textarea.sc-text-input",
+    sc_image: "#scImage",
+    prompts: "#prompts",
+    count: "#prompt-count",
+    generate: "#generate-btn",
+    stop: "#stop-btn",
+    download: "#download-all-btn",
+    grid: "#image-grid, #results-grid, .grid",
+    select_failed: "#select-failed-btn",
+    regen: "#bulk-regen-btn"
+  };
+
   function isCanvasFrame() {
-    return !!(document.querySelector('#prompts') || document.querySelector('#generate-btn'));
+    return !!(document.querySelector(IDS.prompts) || document.querySelector(IDS.generate));
   }
 
-  console.log(`[RenderX] Content script active. isTop: ${isTopFrame}, hasCanvas: ${isCanvasFrame()}`);
+  // Announce presence to the extension if inside the canvas frame
+  if (isCanvasFrame()) {
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: 'RENDERX_CANVAS_READY',
+          hasCanvas: true,
+          url: window.location.href
+        });
+      }
+    } catch (e) {}
+  }
 
-  // Auto-dismiss shared app gates ("Continue" or "Got it") and Google banners
+  // Auto-dismiss shared app gates ("Continue", "Got it") and Google banners
   function dismissGates() {
     const buttons = document.querySelectorAll('button');
     for (const btn of buttons) {
@@ -21,7 +54,7 @@
       if (txt === 'continue' || txt === 'got it') {
         try {
           btn.click();
-          console.log('[RenderX] Dismissed gate:', txt);
+          console.log('[RenderX] Dismissed shared-app gate:', txt);
         } catch (e) {}
       }
     }
@@ -32,7 +65,7 @@
   }
 
   dismissGates();
-  setInterval(dismissGates, 2500);
+  setInterval(dismissGates, 1800);
 
   // Helper to extract image as high-res DataURL via canvas
   function imageToDataUrl(img) {
@@ -49,20 +82,20 @@
   }
 
   // -------------------------------------------------------------
-  // Inside Canvas Child Frame Automation Execution
+  // Inside Canvas Frame Automation Execution
   // -------------------------------------------------------------
   async function runSingleGenerationInFrame(promptText, aspectRatio = 'landscape', options = {}) {
     dismissGates();
 
     // 1. Switch to Image Tab if needed
-    const imageTab = document.querySelector("button[data-tab='image']");
+    const imageTab = document.querySelector(IDS.tab_image);
     if (imageTab && !imageTab.classList.contains('active')) {
       imageTab.click();
       await new Promise(r => setTimeout(r, 400));
     }
 
     // 2. Set Aspect Ratio
-    const aspectSelect = document.querySelector('#aspectRatio') || document.querySelector('select');
+    const aspectSelect = document.querySelector(IDS.aspect) || document.querySelector('select');
     if (aspectSelect) {
       const val = (aspectRatio === '9:16' || aspectRatio === 'portrait') ? 'portrait' :
                   (aspectRatio === '1:1' || aspectRatio === 'square') ? 'square' : 'landscape';
@@ -73,52 +106,52 @@
 
     // 3. Optional Character Lock
     if (options.charLock && options.charDesc) {
-      const ccToggle = document.querySelector('#ccToggle');
+      const ccToggle = document.querySelector(IDS.cc_toggle);
       if (ccToggle && !ccToggle.checked) {
         ccToggle.checked = true;
         ccToggle.dispatchEvent(new Event('change', { bubbles: true }));
         await new Promise(r => setTimeout(r, 400));
       }
-      const ccText = document.querySelector('textarea.cc-text-input, #ccDesc');
+      const ccText = document.querySelector(IDS.cc_text);
       if (ccText) {
-        ccText.value = options.charDesc;
+        ccText.value = options.charDesc.slice(0, 600);
         ccText.dispatchEvent(new Event('input', { bubbles: true }));
       }
     }
 
     // 4. Optional Style Lock
     if (options.styleLock && options.styleDesc) {
-      const scToggle = document.querySelector('#scToggle');
+      const scToggle = document.querySelector(IDS.sc_toggle);
       if (scToggle && !scToggle.checked) {
         scToggle.checked = true;
         scToggle.dispatchEvent(new Event('change', { bubbles: true }));
         await new Promise(r => setTimeout(r, 400));
       }
-      const scText = document.querySelector('textarea.sc-text-input, #scText');
+      const scText = document.querySelector(IDS.sc_text);
       if (scText) {
-        scText.value = options.styleDesc;
+        scText.value = options.styleDesc.slice(0, 600);
         scText.dispatchEvent(new Event('input', { bubbles: true }));
       }
     }
 
     // 5. Fill Prompts Textarea
-    const promptInput = document.querySelector('#prompts') || document.querySelector('textarea');
+    const promptInput = document.querySelector(IDS.prompts) || document.querySelector('textarea');
     if (!promptInput) {
       throw new Error('Canvas #prompts textarea not found inside frame.');
     }
 
     const initialImages = Array.from(document.querySelectorAll('#image-grid img, #results-grid img, .grid img, img'))
-      .filter(img => img.src && (img.naturalWidth > 120 || img.width > 120));
+      .filter(img => img.src && (img.naturalWidth > 100 || img.width > 100));
     const initialCount = initialImages.length;
 
     promptInput.focus();
     promptInput.value = promptText.trim();
     promptInput.dispatchEvent(new Event('input', { bubbles: true }));
     promptInput.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 400));
 
     // 6. Click Generate Button
-    const generateBtn = document.querySelector('#generate-btn') || 
+    const generateBtn = document.querySelector(IDS.generate) || 
       document.querySelector('button[id*="generate"]') ||
       Array.from(document.querySelectorAll('button')).find(b => (b.textContent || '').toLowerCase().includes('generate'));
 
@@ -135,7 +168,7 @@
       await new Promise(r => setTimeout(r, 1500));
 
       const currentImages = Array.from(document.querySelectorAll('#image-grid img, #results-grid img, .grid img, img'))
-        .filter(img => img.src && (img.naturalWidth > 120 || img.width > 120) && img.complete);
+        .filter(img => img.src && (img.naturalWidth > 100 || img.width > 100) && img.complete);
 
       if (currentImages.length > initialCount) {
         const newestImg = currentImages[currentImages.length - 1];
@@ -151,13 +184,12 @@
   // Message Handling: Dual Direct & postMessage Bridge
   // -------------------------------------------------------------
 
-  // Listen for direct Chrome Extension messages (sent to tab or specific frame)
+  // Listen for direct Chrome Extension messages
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'RENDERX_CANVAS_PING') {
       if (isCanvasFrame()) {
         sendResponse({ success: true, hasCanvas: true, isCanvasFrame: true, url: window.location.href });
       } else {
-        // Forward ping to child iframes
         forwardToIframes(request);
         sendResponse({ success: true, hasCanvas: false, isCanvasFrame: false, isTop: isTopFrame });
       }
@@ -171,7 +203,6 @@
           .catch(err => sendResponse({ success: false, error: err.message }));
         return true;
       } else {
-        // Top frame: Forward down to child iframes via postMessage
         forwardToIframesWithResponse(request, sendResponse);
         return true;
       }
@@ -188,8 +219,24 @@
     });
   }
 
-  function forwardToIframesWithResponse(req, sendResponse) {
-    const iframes = document.querySelectorAll('iframe');
+  async function forwardToIframesWithResponse(req, sendResponse) {
+    dismissGates();
+
+    // Wait and poll for iframes to mount if page is still rendering
+    let iframes = document.querySelectorAll('iframe');
+    let attempts = 0;
+    while (iframes.length === 0 && attempts < 15) {
+      await new Promise(r => setTimeout(r, 1000));
+      dismissGates();
+      iframes = document.querySelectorAll('iframe');
+      attempts++;
+    }
+
+    if (iframes.length === 0) {
+      sendResponse({ success: false, error: 'Canvas iframe not mounted in Google tab. Please sign in or click "Continue".' });
+      return;
+    }
+
     const reqId = 'rx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
 
     function onMsg(e) {
