@@ -1,12 +1,13 @@
 /**
  * RenderX Image Studio - Gemini Canvas Isolated Content Relay
- * Bridges MAIN world page interceptor/probe with background.js (Zero tab hijacking).
+ * Bridges MAIN world page interceptor/iframe runner with background.js.
  */
 
 (function () {
   if (window.__renderexCanvasLoaded) return;
   window.__renderexCanvasLoaded = true;
 
+  const isCanvasIframe = location.hostname.endsWith('.scf.usercontent.goog');
   const pendingRequests = new Map();
 
   window.addEventListener('message', (event) => {
@@ -30,7 +31,7 @@
       }).catch(() => {});
     }
 
-    if ((data.type === 'WIZ_TOKENS_RESULT' || data.type === 'PROBE_RESULT') && data.requestId) {
+    if ((data.type === 'WIZ_TOKENS_RESULT' || data.type === 'IFRAME_TURN_RESULT') && data.requestId) {
       const resolver = pendingRequests.get(data.requestId);
       if (resolver) {
         pendingRequests.delete(data.requestId);
@@ -39,7 +40,7 @@
     }
   });
 
-  function queryMainBridge(payload, timeoutMs = 4000) {
+  function queryMainBridge(payload, timeoutMs = 32000) {
     return new Promise((resolve) => {
       const requestId = `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const timer = setTimeout(() => {
@@ -60,23 +61,28 @@
     if (!request) return false;
 
     if (request.type === 'PING') {
-      sendResponse({
-        status: 'READY',
-        mode: 'gemini-canvas-relay',
-        isIframe: location.hostname.endsWith('.scf.usercontent.goog'),
-        url: window.location.href
-      });
-      return true;
+      if (isCanvasIframe) {
+        sendResponse({ status: 'READY', isIframe: true, url: window.location.href });
+        return true;
+      }
+      return false;
     }
 
-    if (request.type === 'READ_WIZ_TOKENS' && !location.hostname.endsWith('.scf.usercontent.goog')) {
+    if (request.type === 'READ_WIZ_TOKENS' && !isCanvasIframe) {
       queryMainBridge({ type: 'READ_WIZ_TOKENS' }, 2500).then(sendResponse);
       return true;
     }
 
-    if (request.type === 'PROBE_CANVAS_IFRAME' && location.hostname.endsWith('.scf.usercontent.goog')) {
-      queryMainBridge({ type: 'PROBE_CANVAS_IFRAME', probePrompt: request.probePrompt }, 4000).then(sendResponse);
+    // Only respond from the *.scf.usercontent.goog Canvas iframe so main frame never steals sendResponse!
+    if (request.type === 'RUN_CANVAS_IFRAME_TURN' && isCanvasIframe) {
+      queryMainBridge({
+        type: 'RUN_CANVAS_IFRAME_TURN',
+        prompt: request.prompt,
+        aspectRatio: request.aspectRatio || '1:1'
+      }, 32000).then(sendResponse);
       return true;
     }
+
+    return false;
   });
 })();
