@@ -1,9 +1,11 @@
 /**
- * RenderX Image Studio - v1.0.1 Application Controller
- * Compact 75-80% Scale Density & 5-Column Grid Implementation
+ * RenderX Image Studio - v1.0.2 Application Controller
+ * Matches RenderX Pro 4-Column Layout, Highlighted Boxes & Canvas Connection Bridge
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const GEMINI_CANVAS_URL = 'https://gemini.google.com/share/f8350ff50be0';
+
   // Application State
   const state = {
     items: [],
@@ -15,7 +17,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     concurrency: 3,
     googleApiKey: '',
     charImageBase64: null,
-    styleImageBase64: null
+    styleImageBase64: null,
+    canvasTabId: null
   };
 
   // DOM Elements - Navigation & Actions
@@ -33,8 +36,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // DOM Elements - Left Sidebar Controls
   const engineSelect = document.getElementById('engineSelect');
+  const canvasClusterStatus = document.getElementById('canvasClusterStatus');
+  const openCanvasTabBtn = document.getElementById('openCanvasTabBtn');
+  const refreshCanvasTabBtn = document.getElementById('refreshCanvasTabBtn');
   const autoFallbackToggle = document.getElementById('autoFallbackToggle');
-  const aspectRatioSelect = document.getElementById('aspectRatioSelect');
+  const aspectBtnGroup = document.getElementById('aspectBtnGroup');
   const charLockToggle = document.getElementById('charLockToggle');
   const charFileInput = document.getElementById('charFileInput');
   const charThumb = document.getElementById('charThumb');
@@ -123,19 +129,59 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     switch (state.selectedEngine) {
       case 'google-aistudio':
-        activeEngineLabel.textContent = 'Google AI Studio (Imagen 3)';
+        activeEngineLabel.textContent = 'Direct API (Google AI Studio)';
         break;
       case 'pollinations-flux':
-        activeEngineLabel.textContent = 'Free Options (FLUX.1 / Serverless)';
+        activeEngineLabel.textContent = 'Free Serverless (FLUX.1)';
         break;
       case 'gemini-canvas':
       default:
-        activeEngineLabel.textContent = 'Gemini Canvas (Free Google Session)';
+        activeEngineLabel.textContent = 'Free Canvas (acc1-7 Cluster)';
         break;
     }
   }
 
   await loadSettings();
+
+  // ================= 2. Gemini Canvas Cluster Detection & Connect =================
+  async function checkCanvasConnection() {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+      try {
+        const tabs = await chrome.tabs.query({ url: ["*://gemini.google.com/share/*", "*://share.gemini.google/*"] });
+        if (tabs && tabs.length > 0) {
+          state.canvasTabId = tabs[0].id;
+          canvasClusterStatus.textContent = '🟢 Connected';
+          canvasClusterStatus.style.color = '#10B981';
+          return true;
+        }
+      } catch (e) {
+        console.warn('Canvas check error:', e);
+      }
+    }
+    canvasClusterStatus.textContent = '🟡 Standby';
+    canvasClusterStatus.style.color = '#F59E0B';
+    return false;
+  }
+
+  await checkCanvasConnection();
+
+  openCanvasTabBtn.addEventListener('click', () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
+      chrome.tabs.create({ url: GEMINI_CANVAS_URL }, (tab) => {
+        state.canvasTabId = tab.id;
+        canvasClusterStatus.textContent = '🟢 Connected';
+        canvasClusterStatus.style.color = '#10B981';
+        showToast('Opened Gemini Canvas session. Ready to generate!', 'success');
+      });
+    } else {
+      window.open(GEMINI_CANVAS_URL, '_blank');
+    }
+  });
+
+  refreshCanvasTabBtn.addEventListener('click', async () => {
+    const isConn = await checkCanvasConnection();
+    showToast(isConn ? 'Gemini Canvas tab detected and connected!' : 'No Canvas tab detected. Click "Open Canvas" to launch one.', isConn ? 'success' : 'info');
+  });
 
   // Settings Modal Events
   openSettingsBtn.addEventListener('click', () => { settingsModal.style.display = 'flex'; });
@@ -154,7 +200,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     showToast('Settings saved successfully', 'success');
   });
 
-  // Engine Select & Fallback
   engineSelect.addEventListener('change', async () => {
     state.selectedEngine = engineSelect.value;
     updateActiveEngineLabel();
@@ -166,14 +211,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     await window.StorageManager.save({ autoFallback: state.autoFallback });
   });
 
-  aspectRatioSelect.addEventListener('change', () => {
-    state.aspectRatio = aspectRatioSelect.value;
+  // Aspect Ratio Button Selector (16:9, 9:16, 1:1)
+  aspectBtnGroup.addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-aspect');
+    if (!btn) return;
+
+    aspectBtnGroup.querySelectorAll('.btn-aspect').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    state.aspectRatio = btn.dataset.aspect;
     document.querySelectorAll('.card-preview').forEach(el => {
       el.className = `card-preview aspect-${state.aspectRatio}`;
     });
+    showToast(`Aspect ratio set to ${btn.textContent}`);
   });
 
-  // ================= 2. Character & Style Reference Uploads =================
+  // ================= 3. Character & Style Reference Uploads =================
   function setupImageUpload(fileInput, thumbImg, thumbPlaceholder, removeBtn, stateKey) {
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -204,7 +257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupImageUpload(charFileInput, charThumbImg, charThumb.querySelector('.placeholder-icon'), charRemoveBtn, 'charImageBase64');
   setupImageUpload(styleFileInput, styleThumbImg, styleThumb.querySelector('.placeholder-icon'), styleRemoveBtn, 'styleImageBase64');
 
-  // ================= 3. Negative Prompt Chips =================
+  // Negative Prompt Chips
   negativeChips.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip-tag');
     if (!chip) return;
@@ -240,76 +293,85 @@ document.addEventListener('DOMContentLoaded', async () => {
     const formatted = window.TimelineParser.autoFormat(text);
     bulkPrompts.value = formatted;
     updatePromptCount();
-    showToast('Timeline prompts synchronized', 'success');
+    showToast('Timeline prompts formatted', 'success');
   });
 
   loadSamplePromptsBtn.addEventListener('click', () => {
     const sample = `00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field
 02.50-08.59 | Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting
 08.59-16.42 | Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric rim lighting
-16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh
-22.94-28.59 | Scene 5: Slow Cinematic Pan perspective, golden hour volumetric atmosphere`;
+16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh`;
 
     bulkPrompts.value = sample;
     updatePromptCount();
-    showToast('Loaded 5 sample timeline scenes', 'success');
+    showToast('Loaded 4 sample scenes', 'success');
   });
 
-  // ================= 5. Default 5-Dummy State + Down Arrow =================
+  // ================= 5. Default 4-Dummy State (Single Row) + Centered Down Arrow =================
   const dummyGridHTML = `
     <div class="dummy-card">
       <div class="dummy-preview">
-        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">00.00 - 04.35</span>
-        <span style="font-size: 10px; color: #64748B;">Shot #1 Standby</span>
+        <span class="timestamp-badge">00.00 - 04.35</span>
+        <span class="card-index">#01</span>
+        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #1 Ready</span>
       </div>
       <div class="dummy-meta">
+        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 01_00.00-04.35.png</span>
+        </div>
         <div class="dummy-line" style="width: 80%;"></div>
         <div class="dummy-line" style="width: 50%;"></div>
       </div>
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">04.35 - 07.83</span>
-        <span style="font-size: 10px; color: #64748B;">Shot #2 Standby</span>
+        <span class="timestamp-badge">04.35 - 07.83</span>
+        <span class="card-index">#02</span>
+        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #2 Ready</span>
       </div>
       <div class="dummy-meta">
+        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 02_04.35-07.83.png</span>
+        </div>
         <div class="dummy-line" style="width: 70%;"></div>
         <div class="dummy-line" style="width: 40%;"></div>
       </div>
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">07.83 - 11.74</span>
-        <span style="font-size: 10px; color: #64748B;">Shot #3 Standby</span>
+        <span class="timestamp-badge">07.83 - 11.74</span>
+        <span class="card-index">#03</span>
+        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #3 Ready</span>
       </div>
       <div class="dummy-meta">
+        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 03_07.83-11.74.png</span>
+        </div>
         <div class="dummy-line" style="width: 85%;"></div>
         <div class="dummy-line" style="width: 55%;"></div>
       </div>
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">11.74 - 16.52</span>
-        <span style="font-size: 10px; color: #64748B;">Shot #4 Standby</span>
+        <span class="timestamp-badge">11.74 - 16.52</span>
+        <span class="card-index">#04</span>
+        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #4 Ready</span>
       </div>
       <div class="dummy-meta">
+        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 04_11.74-16.52.png</span>
+        </div>
         <div class="dummy-line" style="width: 75%;"></div>
         <div class="dummy-line" style="width: 45%;"></div>
       </div>
     </div>
-    <div class="dummy-card">
-      <div class="dummy-preview">
-        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">16.52 - 19.13</span>
-        <span style="font-size: 10px; color: #64748B;">Shot #5 Standby</span>
-      </div>
-      <div class="dummy-meta">
-        <div class="dummy-line" style="width: 90%;"></div>
-        <div class="dummy-line" style="width: 60%;"></div>
-      </div>
-    </div>
     <div class="dummy-continuation-row">
       <div class="dummy-arrow-circle">↓</div>
-      <span class="dummy-continuation-text">Standby: Images will populate dynamically upon generation</span>
+      <span class="dummy-continuation-text">Standby: Images will populate dynamically in 4-column rows upon generation</span>
     </div>
   `;
 
@@ -341,7 +403,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ================= 6. Card Rendering (5-Column Layout) =================
+  // ================= 6. Card Rendering (4-Column Layout) =================
   function renderPlaceholderCards(items) {
     galleryGrid.innerHTML = '';
     items.forEach((item) => {
@@ -349,17 +411,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.className = 'image-card';
       card.id = `card-${item.index}`;
 
+      const fn = item.filename || `0${item.index}_${item.cleanTimestamp}.png`;
+
       card.innerHTML = `
         <div class="card-preview aspect-${state.aspectRatio}" id="preview-${item.index}">
           <span class="timestamp-badge">${item.timestamp}</span>
-          <span class="card-index">#${item.index}</span>
+          <span class="card-index">#${String(item.index).padStart(2, '0')}</span>
           <div class="card-loading" id="loading-${item.index}">
             <div class="spinner"></div>
             <span>Waiting in queue...</span>
           </div>
         </div>
         <div class="card-meta">
-          <p class="card-prompt-text" title="${item.prompt}">${item.prompt}</p>
+          <span class="card-filename">📁 ${fn}</span>
+          <div class="card-prompt-text" title="${item.prompt}">${item.prompt}</div>
           <div class="card-actions">
             <button class="btn-card-action" data-action="edit" data-index="${item.index}">Edit</button>
             <button class="btn-card-action btn-regen" data-action="regen" data-index="${item.index}">Regen</button>
@@ -383,18 +448,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const cardEl = document.getElementById(`card-${item.index}`);
     if (!previewEl || !cardEl) return;
 
-    // Clear loading spinner
     const loadingEl = document.getElementById(`loading-${item.index}`);
     if (loadingEl) loadingEl.remove();
 
-    // Create image element
     const img = document.createElement('img');
     img.src = item.objectUrl;
     img.alt = item.prompt;
     img.onclick = () => openLightbox(item);
     previewEl.appendChild(img);
 
-    // Zoom badge overlay
     const zoomBtn = document.createElement('div');
     zoomBtn.className = 'zoom-overlay-btn';
     zoomBtn.innerHTML = '🔍 Zoom';
@@ -407,7 +469,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (loadingEl) {
       loadingEl.innerHTML = `
         <span style="color: #F87171; font-weight: 700;">Failed</span>
-        <span style="font-size: 9px; color: var(--text-dim); text-align: center; padding: 0 4px; line-height: 1.2;">${errorMsg}</span>
+        <span style="font-size: 8.5px; color: var(--text-dim); text-align: center; padding: 0 4px; line-height: 1.2;">${errorMsg}</span>
       `;
     }
   }
@@ -498,7 +560,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       downloadZipBtn.disabled = false;
       showToast(`Batch completed: ${successCount} scenes ready!`, 'success');
     } else {
-      showToast('Batch encountered issues. Check errors or API key.', 'error');
+      showToast('Batch encountered issues. Check errors or Canvas session.', 'error');
     }
   }
 
