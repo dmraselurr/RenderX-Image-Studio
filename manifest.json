@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RenderX Image Studio",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "High-speed bulk AI image generator with timeline sync for video editing, character/style lock, and multi-engine auto-fallback.",
   "permissions": [
     "storage",
@@ -12,6 +12,7 @@
     "*://*.google.com/*",
     "*://gemini.google.com/*",
     "*://share.gemini.google/*",
+    "*://*.googleusercontent.com/*",
     "*://*/*"
   ],
   "background": {
@@ -21,9 +22,11 @@
     {
       "matches": [
         "*://gemini.google.com/*",
-        "*://share.gemini.google/*"
+        "*://share.gemini.google/*",
+        "*://*.googleusercontent.com/*"
       ],
       "all_frames": true,
+      "match_about_blank": true,
       "js": [
         "js/gemini-content-script.js"
       ],
