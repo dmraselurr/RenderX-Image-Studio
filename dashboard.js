@@ -80,6 +80,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryTimelineHint = $('galleryTimelineHint');
   const progressBarWrap = $('progressBarWrap');
   const progressBarFill = $('progressBarFill');
+  const btnRetryFailedBatch = $('btnRetryFailedBatch');
+  const btnRefreshWorkflow = $('btnRefreshWorkflow');
   const clearGalleryBtn = $('clearGalleryBtn');
   const downloadZipTopBtn = $('downloadZipTopBtn');
   const pushTimelineBtn = $('pushTimelineBtn');
@@ -616,7 +618,51 @@ document.addEventListener('DOMContentLoaded', () => {
   if (clearGalleryBtn) {
     clearGalleryBtn.addEventListener('click', () => {
       resetGalleryToStandby();
-      showToast('Gallery reset to standby grid');
+      showToast('Gallery reset to standby grid (prompts kept intact)');
+    });
+  }
+
+  if (btnRefreshWorkflow) {
+    btnRefreshWorkflow.addEventListener('click', async () => {
+      try { await apiJson('/api/batch/stop', 'POST'); } catch (e) {}
+      state.isGenerating = false;
+      if (generateBatchBtn) generateBatchBtn.disabled = false;
+      if (stopBatchBtn) stopBatchBtn.disabled = true;
+      if (btnRetryFailedBatch) btnRetryFailedBatch.disabled = true;
+
+      // Reset gallery to standby without touching promptsTextarea!
+      resetGalleryToStandby();
+
+      // Reset engine & workflow options to Default Mode
+      state.subMode = 'image';
+      if (flowSubmodeBtnRow) {
+        flowSubmodeBtnRow.querySelectorAll('.btn-submode-opt').forEach(b => b.classList.toggle('active', b.dataset.submode === 'image'));
+      }
+      if (flowInitFrameSlot) flowInitFrameSlot.style.display = 'none';
+      state.flowReferenceImage = null;
+      if (flowInitFrameInput) flowInitFrameInput.value = '';
+      if (flowInitFramePreview) flowInitFramePreview.style.display = 'none';
+
+      // Default aspect ratio 1:1 Square
+      state.aspectRatio = '1:1';
+      if (aspectBtnGroup) {
+        aspectBtnGroup.querySelectorAll('.btn-aspect').forEach(b => b.classList.toggle('active', b.dataset.aspect === '1:1'));
+      }
+      document.querySelectorAll('.card-preview').forEach(box => {
+        box.className = 'card-preview aspect-square';
+      });
+
+      // Reset consistency toggles OFF
+      if (charToggle) charToggle.checked = false;
+      if (styleToggle) styleToggle.checked = false;
+      state.charImageBase64 = null;
+      state.styleImageBase64 = null;
+      if (charPreviewBox) charPreviewBox.style.display = 'none';
+      if (stylePreviewBox) stylePreviewBox.style.display = 'none';
+      if (customNegativeInput) customNegativeInput.value = '';
+
+      setEngine('gemini-canvas');
+      showToast('Workflow refreshed to Default Mode (left prompts preserved)');
     });
   }
 
@@ -670,10 +716,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <button type="button" class="btn-card-action" data-action="save" data-index="${item.index}">💾 Save</button>
             ${!isVideo ? `<button type="button" class="btn-card-action btn-flow" data-action="animate" data-index="${item.index}" title="Animate in Flow">🌊 Flow</button>` : ''}
           </div>
-          <div class="card-check-row">
-            <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-            <label class="check-label"><input type="checkbox"> Auto Merge</label>
-          </div>
         </div>
       `;
       thumbnailGrid.appendChild(card);
@@ -697,6 +739,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (badge) {
       badge.className = 'badge-done';
       badge.textContent = 'Ready';
+      badge.style.color = '';
+      badge.style.borderColor = '';
     }
     previewBox.innerHTML = '';
 
@@ -798,6 +842,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!resp || !resp.success) {
       showToast(resp?.error || 'Could not start batch');
       finishQueue();
+    } else {
+      startPollSync();
     }
   };
 
@@ -839,19 +885,56 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (msg.type === 'DIAGNOSTIC_LOG') {
       updateDiagnosticLine(msg.text || '', Boolean(msg.isError));
     } else if (msg.type === 'QUEUE_FINISHED') {
-      finishQueue();
+      syncBatchStateFromServer().finally(() => finishQueue());
     }
+  }
+
+  let pollSyncTimer = null;
+  function startPollSync() {
+    stopPollSync();
+    pollSyncTimer = setInterval(syncBatchStateFromServer, 3000);
+  }
+  function stopPollSync() {
+    if (pollSyncTimer) {
+      clearInterval(pollSyncTimer);
+      pollSyncTimer = null;
+    }
+  }
+
+  async function syncBatchStateFromServer() {
+    try {
+      const res = await apiJson('/api/batch/state');
+      if (!res || !res.success || !Array.isArray(res.items)) return;
+      res.items.forEach(srv => {
+        const local = state.items.find(i => i.index === srv.index);
+        if (!local) return;
+        if (srv.status === 'done' && srv.dataUrl && (local.status !== 'done' || !local.dataUrl)) {
+          local.dataUrl = srv.dataUrl;
+          local.status = 'done';
+          if (srv.mediaType) local.mediaType = srv.mediaType;
+          updateCardCompleted(local);
+        } else if (srv.status === 'failed' && local.status !== 'failed' && local.status !== 'done') {
+          local.status = 'failed';
+          updateCardFailed(local.index, srv.error || 'Generation failed', 0);
+        }
+      });
+      updateOverallProgress();
+    } catch (e) {}
   }
 
   function updateOverallProgress() {
     const total = state.items.length;
     if (total === 0) return;
     const completed = state.items.filter(i => i.status === 'done').length;
+    const failedCount = state.items.filter(i => i.status === 'failed').length;
     const pct = Math.round((completed / total) * 100);
     if (progressBarFill) progressBarFill.style.width = `${pct}%`;
     if (completed > 0) {
       if (downloadZipBtn) downloadZipBtn.disabled = false;
       if (downloadZipTopBtn) downloadZipTopBtn.disabled = false;
+    }
+    if (btnRetryFailedBatch) {
+      btnRetryFailedBatch.disabled = state.isGenerating || failedCount === 0;
     }
     if (galleryReadyPill) {
       galleryReadyPill.textContent = (state.isGenerating && completed < total)
@@ -861,12 +944,64 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function finishQueue() {
+    stopPollSync();
     state.isGenerating = false;
     if (generateBatchBtn) generateBatchBtn.disabled = false;
     if (stopBatchBtn) stopBatchBtn.disabled = true;
     updateOverallProgress();
     const completed = state.items.filter(i => i.status === 'done').length;
     showToast(`Batch completed: ${completed} shots saved to outputs/`);
+  }
+
+  async function retrySpecificItems(targetItems) {
+    if (!targetItems || targetItems.length === 0) return showToast('No failed shots to regenerate');
+    if (state.isGenerating) return showToast('Wait for active batch or click Stop first');
+
+    const charPrompt = (charToggle && charToggle.checked && charPromptText) ? charPromptText.value.trim() : '';
+    const stylePrompt = (styleToggle && styleToggle.checked && stylePromptText) ? stylePromptText.value.trim() : '';
+
+    targetItems.forEach(it => {
+      it.status = 'generating';
+      it.dataUrl = null;
+      const previewBox = document.getElementById(`previewBox-${it.index}`);
+      if (previewBox) {
+        previewBox.innerHTML = `<div class="card-spinner" id="spinner-${it.index}"><div class="spin-circle"></div><span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${it.index}">Regenerating...</span></div>`;
+      }
+      const badge = document.getElementById(`badge-${it.index}`);
+      if (badge) {
+        badge.style.color = '';
+        badge.style.borderColor = '';
+      }
+      updateCardStatus(it.index, 'Retrying...');
+    });
+
+    state.isGenerating = true;
+    if (generateBatchBtn) generateBatchBtn.disabled = true;
+    if (stopBatchBtn) stopBatchBtn.disabled = false;
+    if (btnRetryFailedBatch) btnRetryFailedBatch.disabled = true;
+    startPollSync();
+
+    const resp = await apiJson('/api/batch/start', 'POST', {
+      items: targetItems,
+      engine: state.engine,
+      subMode: state.subMode,
+      isRetry: true,
+      charDesc: charPrompt || null,
+      styleDesc: stylePrompt || null,
+      charImageBase64: (charToggle && charToggle.checked && state.charImageBase64) ? state.charImageBase64 : null,
+      styleImageBase64: (styleToggle && styleToggle.checked && state.styleImageBase64) ? state.styleImageBase64 : null
+    });
+    if (!resp || !resp.success) {
+      showToast(resp?.error || 'Could not start regeneration');
+      finishQueue();
+    }
+  }
+
+  if (btnRetryFailedBatch) {
+    btnRetryFailedBatch.addEventListener('click', () => {
+      const failedItems = state.items.filter(i => i.status === 'failed');
+      retrySpecificItems(failedItems);
+    });
   }
 
   // ================= 10. Individual Card Actions =================
@@ -882,16 +1017,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (item && item.dataUrl) downloadDataUrl(item.dataUrl, item.filename || `shot_${index}.png`);
         else showToast(`Shot #${index} not yet ready`);
       } else if (action === 'retry' && item) {
-        if (state.isGenerating) return showToast('Wait for active batch or click Stop first');
-        item.status = 'generating';
-        item.dataUrl = null;
-        const previewBox = document.getElementById(`previewBox-${index}`);
-        if (previewBox) {
-          previewBox.innerHTML = `<div class="card-spinner" id="spinner-${index}"><div class="spin-circle"></div><span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${index}">Retrying...</span></div>`;
-        }
-        updateCardStatus(index, 'Retrying...');
-        state.isGenerating = true;
-        await apiJson('/api/batch/start', 'POST', { items: [item], engine: state.engine, subMode: state.subMode });
+        retrySpecificItems([item]);
       } else if (action === 'animate' && item && item.dataUrl) {
         setEngine('google-flow');
         state.subMode = 'image-to-video';
