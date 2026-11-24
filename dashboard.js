@@ -738,22 +738,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function updateCardFailed(index, errorMsg) {
+  function escapeHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function updateDiagnosticLine(text, isError = false) {
+    if (!galleryTimelineHint) return;
+    galleryTimelineHint.textContent = text;
+    galleryTimelineHint.style.color = isError ? '#F87171' : '#38BDF8';
+  }
+
+  function updateCardFailed(index, errorMsg, httpStatus = 0) {
     const previewBox = document.getElementById(`previewBox-${index}`);
     const badge = document.getElementById(`badge-${index}`);
     if (!previewBox) return;
 
+    const statusLabel = httpStatus ? `HTTP ${httpStatus}` : 'Failed';
     if (badge) {
       badge.className = 'badge-standby';
-      badge.textContent = 'Failed';
+      badge.textContent = statusLabel;
       badge.style.color = '#EF4444';
       badge.style.borderColor = '#EF4444';
     }
 
+    const safeErr = escapeHtml(errorMsg || 'Request failed');
     previewBox.innerHTML = `
-      <div style="padding:10px; text-align:center; display:flex; flex-direction:column; gap:4px;">
-        <span style="color:#F87171; font-weight:800; font-size:9.5px;">Shot Failed</span>
-        <span style="font-size:8px; color:var(--text-dim); line-height:1.2;">${errorMsg}</span>
+      <div style="padding:10px; text-align:center; display:flex; flex-direction:column; gap:4px; overflow-y:auto; max-height:100%;">
+        <span style="color:#F87171; font-weight:800; font-size:9.5px;">${httpStatus ? `Shot Failed (HTTP ${httpStatus})` : 'Shot Failed'}</span>
+        <span style="font-size:8px; color:var(--text-muted); line-height:1.25; word-break:break-word;">${safeErr}</span>
       </div>
     `;
   }
@@ -871,10 +885,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (item.status === 'done') return;
         item.status = 'failed';
       }
-      updateCardFailed(msg.index, msg.error || 'Automation timeout');
+      updateCardFailed(msg.index, msg.error || 'Automation timeout', msg.httpStatus || 0);
+      updateDiagnosticLine(`Shot #${msg.index} Error: ${msg.error || ('HTTP ' + (msg.httpStatus || 'ERR'))}`, true);
       updateOverallProgress();
+    } else if (msg.type === 'DIAGNOSTIC_LOG') {
+      updateDiagnosticLine(msg.text || '', Boolean(msg.isError));
     } else if (msg.type === 'SYNC_STATUS_UPDATED') {
       applySyncStatusUI(msg.geminiSynced, msg.flowSynced);
+      updateDiagnosticLine('RPC Protocol Synced (MAIN-World Ready)');
       showToast('Session RPC protocol synced (Zero-Tab Ready!)');
     } else if (msg.type === 'QUEUE_FINISHED') {
       finishQueue();
