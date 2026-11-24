@@ -1160,8 +1160,40 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Custom Canvas URL persistence
+  const customCanvasUrlInput = document.getElementById('customCanvasUrlInput');
+  const btnSaveCanvasUrl = document.getElementById('btnSaveCanvasUrl');
+  async function loadCustomCanvasUrl() {
+    if (!customCanvasUrlInput) return;
+    try {
+      const res = await fetch('/api/canvas-url');
+      if (res.ok) {
+        const data = await res.json();
+        customCanvasUrlInput.value = data.canvas_url || '';
+      }
+    } catch {}
+  }
+  if (btnSaveCanvasUrl && customCanvasUrlInput) {
+    btnSaveCanvasUrl.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/canvas-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ canvas_url: customCanvasUrlInput.value.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to save URL');
+        customCanvasUrlInput.value = data.canvas_url;
+        showToast(data.is_custom ? 'Custom Canvas URL saved!' : 'Reset to default Canvas URL');
+      } catch (err) {
+        showToast(err.message || 'Invalid Canvas URL', 'error');
+      }
+    });
+  }
+
   // Init
   updatePromptCount();
   updateNegativeCount();
+  loadCustomCanvasUrl();
   connectWebSocket();
 });
