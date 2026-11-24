@@ -81,13 +81,17 @@
                 <span class="engine-opt-icon">🌊</span>
                 <span>Google Flow</span>
               </button>
+              <button type="button" class="btn-engine-ok" id="btnEngineVerifyOk" title="Verify engine &amp; Chrome profile connection (Green = Connected, Red = Disconnected)">
+                <span class="ok-signal-dot" id="engineOkDot"></span>
+                <span id="engineOkLabel">OK</span>
+              </button>
             </div>
 
             <!-- Active Google Session Status Bar (8 Chrome Profiles Cluster) -->
             <div class="canvas-cluster-bar" id="clusterStatusBar">
               <div class="cluster-status-line">
                 <span class="cluster-status-label">CHROME PROFILE CLUSTER:</span>
-                <span class="cluster-status-val connected" id="clusterStateText">🟢 Desktop Ready</span>
+                <span class="cluster-status-val reconnecting" id="clusterStateText">🟡 Reconnecting...</span>
               </div>
               <div class="cluster-profile-pill" id="clusterProfilePill">
                 <span class="cluster-dot"></span>
