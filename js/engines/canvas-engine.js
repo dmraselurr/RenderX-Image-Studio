@@ -1,9 +1,14 @@
 /**
- * RenderX Image Studio - Gemini Canvas Engine
- * 5-Retry Resilient Bridge with Auto-Tab Launch & Dual Frame Messaging
+ * RenderX Image Studio - Gemini Canvas Engine (v1.0.5 PRO)
+ * Dual-URL Bridge with Auto-Tab Launch, Frame Routing & Resilient Retries
+ * Primary App URL: https://share.gemini.google/cTnZQ3bpoER7
+ * Fallback App URL: https://gemini.google.com/share/f8350ff50be0
  */
 
 class CanvasEngine {
+  static PRIMARY_CANVAS_URL = 'https://share.gemini.google/cTnZQ3bpoER7';
+  static FALLBACK_CANVAS_URL = 'https://gemini.google.com/share/f8350ff50be0';
+
   /**
    * Helper to convert Base64 DataURL to Blob
    */
@@ -28,7 +33,13 @@ class CanvasEngine {
   static async getOrCreateGeminiTab() {
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       try {
-        const tabs = await chrome.tabs.query({ url: ["*://gemini.google.com/*", "*://share.gemini.google/*"] });
+        const tabs = await chrome.tabs.query({
+          url: [
+            "*://gemini.google.com/*",
+            "*://share.gemini.google/*",
+            "*://*.googleusercontent.com/*"
+          ]
+        });
         if (tabs && tabs.length > 0) {
           return tabs[0];
         }
@@ -36,7 +47,7 @@ class CanvasEngine {
         // Auto-launch Canvas session tab if not already open
         console.log('[RenderX] No active Canvas tab found. Auto-launching Canvas session...');
         const newTab = await new Promise(resolve => {
-          chrome.tabs.create({ url: 'https://gemini.google.com/share/f8350ff50be0', active: false }, resolve);
+          chrome.tabs.create({ url: CanvasEngine.PRIMARY_CANVAS_URL, active: false }, resolve);
         });
 
         // Allow 5s for the shared Canvas iframe to mount
@@ -57,14 +68,14 @@ class CanvasEngine {
 
     const geminiTab = await CanvasEngine.getOrCreateGeminiTab();
     if (!geminiTab) {
-      throw new Error('Unable to detect or launch Gemini Canvas tab.');
+      throw new Error('Unable to detect or launch Gemini Canvas tab (No active extension tab bridge).');
     }
 
     if (geminiTab.id && chrome.tabs && chrome.tabs.sendMessage) {
       const response = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error('Canvas bridge response timeout (50s).'));
-        }, 52000);
+          reject(new Error('Canvas bridge response timeout (45s).'));
+        }, 46000);
 
         chrome.tabs.sendMessage(geminiTab.id, {
           type: 'RENDERX_GENERATE_IMAGE',
