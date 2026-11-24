@@ -70,6 +70,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statRemaining = document.getElementById('statRemaining');
   const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
+  const galleryReadyPill = document.getElementById('galleryReadyPill');
+  const resetShootGalleryBtn = document.getElementById('resetShootGalleryBtn');
+  const downloadAllZipTopBtn = document.getElementById('downloadAllZipTopBtn');
+  const pushTimelineBtn = document.getElementById('pushTimelineBtn');
 
   // DOM Elements - Lightbox Modal
   const lightboxModal = document.getElementById('lightboxModal');
@@ -147,7 +151,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function checkCanvasConnection() {
     if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
       try {
-        const tabs = await chrome.tabs.query({ url: ["*://gemini.google.com/share/*", "*://share.gemini.google/*"] });
+        const tabs = await chrome.tabs.query({ url: ["*://gemini.google.com/*", "*://share.gemini.google/*"] });
         if (tabs && tabs.length > 0) {
           state.canvasTabId = tabs[0].id;
           canvasClusterStatus.textContent = '🟢 Connected';
@@ -310,65 +314,121 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ================= 5. Default 4-Dummy State (Single Row) + Centered Down Arrow =================
   const dummyGridHTML = `
     <div class="dummy-card">
+      <div class="card-header-bar">
+        <span class="timestamp-badge">🛡️ 00.00 - 04.35</span>
+        <span class="badge-standby">Standby</span>
+      </div>
       <div class="dummy-preview">
-        <span class="timestamp-badge">00.00 - 04.35</span>
-        <span class="card-index">#01</span>
-        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
         <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #1 Ready</span>
       </div>
-      <div class="dummy-meta">
-        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 01_00.00-04.35.png</span>
+      <div class="card-meta">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="card-filename">📁 01_00.00-04.35.png</span>
+          <span class="card-index">#01</span>
         </div>
-        <div class="dummy-line" style="width: 80%;"></div>
-        <div class="dummy-line" style="width: 50%;"></div>
+        <div class="card-prompt-text">Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field...</div>
+        <div class="card-actions-grid">
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
+            <button class="btn-card-action btn-regen" data-action="regen" data-index="1">🎲 Re-Roll</button>
+            <button class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
+          </div>
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="final-cut" data-index="1">🎬 Final Cut</button>
+            <button class="btn-card-action" data-action="auto-merge" data-index="1">🔀 Auto Merge</button>
+          </div>
+        </div>
       </div>
     </div>
+
     <div class="dummy-card">
+      <div class="card-header-bar">
+        <span class="timestamp-badge">🛡️ 04.35 - 07.83</span>
+        <span class="badge-standby">Standby</span>
+      </div>
       <div class="dummy-preview">
-        <span class="timestamp-badge">04.35 - 07.83</span>
-        <span class="card-index">#02</span>
-        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
         <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #2 Ready</span>
       </div>
-      <div class="dummy-meta">
-        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 02_04.35-07.83.png</span>
+      <div class="card-meta">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="card-filename">📁 02_04.35-07.83.png</span>
+          <span class="card-index">#02</span>
         </div>
-        <div class="dummy-line" style="width: 70%;"></div>
-        <div class="dummy-line" style="width: 40%;"></div>
+        <div class="card-prompt-text">Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting...</div>
+        <div class="card-actions-grid">
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
+            <button class="btn-card-action btn-regen" data-action="regen" data-index="2">🎲 Re-Roll</button>
+            <button class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
+          </div>
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="final-cut" data-index="2">🎬 Final Cut</button>
+            <button class="btn-card-action" data-action="auto-merge" data-index="2">🔀 Auto Merge</button>
+          </div>
+        </div>
       </div>
     </div>
+
     <div class="dummy-card">
+      <div class="card-header-bar">
+        <span class="timestamp-badge">🛡️ 07.83 - 11.74</span>
+        <span class="badge-standby">Standby</span>
+      </div>
       <div class="dummy-preview">
-        <span class="timestamp-badge">07.83 - 11.74</span>
-        <span class="card-index">#03</span>
-        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
         <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #3 Ready</span>
       </div>
-      <div class="dummy-meta">
-        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 03_07.83-11.74.png</span>
+      <div class="card-meta">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="card-filename">📁 03_07.83-11.74.png</span>
+          <span class="card-index">#03</span>
         </div>
-        <div class="dummy-line" style="width: 85%;"></div>
-        <div class="dummy-line" style="width: 55%;"></div>
+        <div class="card-prompt-text">Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric rim...</div>
+        <div class="card-actions-grid">
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
+            <button class="btn-card-action btn-regen" data-action="regen" data-index="3">🎲 Re-Roll</button>
+            <button class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
+          </div>
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="final-cut" data-index="3">🎬 Final Cut</button>
+            <button class="btn-card-action" data-action="auto-merge" data-index="3">🔀 Auto Merge</button>
+          </div>
+        </div>
       </div>
     </div>
+
     <div class="dummy-card">
+      <div class="card-header-bar">
+        <span class="timestamp-badge">🛡️ 11.74 - 16.52</span>
+        <span class="badge-standby">Standby</span>
+      </div>
       <div class="dummy-preview">
-        <span class="timestamp-badge">11.74 - 16.52</span>
-        <span class="card-index">#04</span>
-        <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+        <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
         <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #4 Ready</span>
       </div>
-      <div class="dummy-meta">
-        <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-          <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 04_11.74-16.52.png</span>
+      <div class="card-meta">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="card-filename">📁 04_11.74-16.52.png</span>
+          <span class="card-index">#04</span>
         </div>
-        <div class="dummy-line" style="width: 75%;"></div>
-        <div class="dummy-line" style="width: 45%;"></div>
+        <div class="card-prompt-text">Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh...</div>
+        <div class="card-actions-grid">
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
+            <button class="btn-card-action btn-regen" data-action="regen" data-index="4">🎲 Re-Roll</button>
+            <button class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
+          </div>
+          <div class="action-subrow">
+            <button class="btn-card-action" data-action="final-cut" data-index="4">🎬 Final Cut</button>
+            <button class="btn-card-action" data-action="auto-merge" data-index="4">🔀 Auto Merge</button>
+          </div>
+        </div>
       </div>
     </div>
+
     <div class="dummy-continuation-row">
       <div class="dummy-arrow-circle">↓</div>
       <span class="dummy-continuation-text">Standby: Images will populate dynamically in 4-column rows upon generation</span>
@@ -384,6 +444,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     statTotal.textContent = '0';
     statGenerated.textContent = '0';
     statRemaining.textContent = '0';
+    if (galleryReadyPill) galleryReadyPill.textContent = '0 READY (STANDBY GRID)';
     progressBar.style.display = 'none';
     progressFill.style.width = '0%';
     downloadZipBtn.disabled = true;
@@ -393,6 +454,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     resetGalleryToDummy();
     showToast('Gallery cleared', 'info');
   });
+
+  if (resetShootGalleryBtn) {
+    resetShootGalleryBtn.addEventListener('click', () => {
+      resetGalleryToDummy();
+      showToast('Shoot gallery reset', 'info');
+    });
+  }
+
+  if (downloadAllZipTopBtn) {
+    downloadAllZipTopBtn.addEventListener('click', () => {
+      downloadZipBtn.click();
+    });
+  }
+
+  if (pushTimelineBtn) {
+    pushTimelineBtn.addEventListener('click', () => {
+      downloadZipBtn.click();
+      showToast('Exporting timeline package for video editors...', 'success');
+    });
+  }
 
   globalResetBtn.addEventListener('click', () => {
     if (confirm('Reset RenderX Studio? This will clear all prompts and generated gallery.')) {
@@ -414,20 +495,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       const fn = item.filename || `0${item.index}_${item.cleanTimestamp}.png`;
 
       card.innerHTML = `
+        <div class="card-header-bar">
+          <span class="timestamp-badge">🛡️ ${item.timestamp}</span>
+          <span class="badge-standby" id="badge-${item.index}">Standby</span>
+        </div>
         <div class="card-preview aspect-${state.aspectRatio}" id="preview-${item.index}">
-          <span class="timestamp-badge">${item.timestamp}</span>
-          <span class="card-index">#${String(item.index).padStart(2, '0')}</span>
           <div class="card-loading" id="loading-${item.index}">
             <div class="spinner"></div>
             <span>Waiting in queue...</span>
           </div>
         </div>
         <div class="card-meta">
-          <span class="card-filename">📁 ${fn}</span>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span class="card-filename">📁 ${fn}</span>
+            <span class="card-index">#${String(item.index).padStart(2, '0')}</span>
+          </div>
           <div class="card-prompt-text" title="${item.prompt}">${item.prompt}</div>
-          <div class="card-actions">
-            <button class="btn-card-action" data-action="edit" data-index="${item.index}">Edit</button>
-            <button class="btn-card-action btn-regen" data-action="regen" data-index="${item.index}">Regen</button>
+          <div class="card-actions-grid">
+            <div class="action-subrow">
+              <button class="btn-card-action" data-action="edit" data-index="${item.index}">✏️ Edit</button>
+              <button class="btn-card-action btn-regen" data-action="regen" data-index="${item.index}">🎲 Re-Roll</button>
+              <button class="btn-card-action" data-action="save" data-index="${item.index}">💾 Save</button>
+            </div>
+            <div class="action-subrow">
+              <button class="btn-card-action" data-action="final-cut" data-index="${item.index}">🎬 Final Cut</button>
+              <button class="btn-card-action" data-action="auto-merge" data-index="${item.index}">🔀 Auto Merge</button>
+            </div>
           </div>
         </div>
       `;
@@ -447,6 +540,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const previewEl = document.getElementById(`preview-${item.index}`);
     const cardEl = document.getElementById(`card-${item.index}`);
     if (!previewEl || !cardEl) return;
+
+    const badgeEl = document.getElementById(`badge-${item.index}`);
+    if (badgeEl) {
+      badgeEl.className = 'badge-acc';
+      badgeEl.textContent = 'acc1';
+    }
 
     const loadingEl = document.getElementById(`loading-${item.index}`);
     if (loadingEl) loadingEl.remove();
@@ -541,6 +640,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         statGenerated.textContent = state.items.filter(it => it.status === 'done').length;
         statRemaining.textContent = Math.max(0, total - completedCount);
+        if (galleryReadyPill) galleryReadyPill.textContent = `${statGenerated.textContent} / ${total} READY`;
         const percent = Math.round((completedCount / total) * 100);
         progressFill.style.width = `${percent}%`;
       }
@@ -612,6 +712,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       showToast(`Regenerating Scene #${item.index}...`);
       await generateSingleItem(item);
       statGenerated.textContent = state.items.filter(it => it.status === 'done').length;
+      if (galleryReadyPill) galleryReadyPill.textContent = `${statGenerated.textContent} / ${state.items.length} READY`;
+    } else if (action === 'save') {
+      if (!item.blob) {
+        showToast('Image not generated yet', 'info');
+        return;
+      }
+      const a = document.createElement('a');
+      a.href = item.objectUrl;
+      a.download = item.filename || `Scene_${item.index}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showToast(`Saved ${item.filename}`, 'success');
+    } else if (action === 'final-cut') {
+      btn.classList.toggle('active-final');
+      const isApproved = btn.classList.contains('active-final');
+      showToast(`Scene #${item.index} ${isApproved ? 'added to Final Cut ⭐' : 'removed from Final Cut'}`, isApproved ? 'success' : 'info');
+    } else if (action === 'auto-merge') {
+      showToast(`Scene #${item.index} timeline stream linked`, 'success');
     }
   });
 
