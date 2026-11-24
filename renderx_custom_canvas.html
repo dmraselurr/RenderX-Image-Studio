@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RenderX Canvas Studio — Custom Gemini Engine</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    :root {
+      --bg-app: #05070B;
+      --bg-panel: #07090E;
+      --bg-card: #0A0F1D;
+      --bg-card-header: #152033;
+      --bg-input: #0B101E;
+      --border-subtle: #1E293B;
+      --border-focus: #38BDF8;
+      --primary: #5B5BD6;
+      --primary-hover: #4C4CBF;
+      --accent-cyan: #38BDF8;
+      --accent-pink: #FF1E56;
+      --accent-purple: #A855F7;
+      --accent-green: #10B981;
+      --accent-amber: #F59E0B;
+      --accent-red: #EF4444;
+      --text-main: #FFFFFF;
+      --text-muted: #94A3B8;
+      --text-dim: #64748B;
+      --font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: var(--font-family); -webkit-font-smoothing: antialiased; }
+    body {
+      background: var(--bg-app);
+      color: var(--text-main);
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #05070B; }
+    ::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #334155; }
+
+    /* Topbar */
+    .topbar {
+      height: 48px;
+      background: #07090E;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 40;
+    }
+    .logo-group { display: flex; align-items: center; gap: 10px; }
+    .ris-badge {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, #111827, #090D16);
+      border: 1.5px solid #FF1E56;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 11px; letter-spacing: 0.5px;
+      color: #fff;
+      box-shadow: 0 0 14px rgba(255, 30, 86, 0.4);
+    }
+    .brand-title { font-size: 14px; font-weight: 800; letter-spacing: -0.2px; color: #fff; }
+    .brand-ver {
+      font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px;
+      background: rgba(91, 91, 214, 0.2); border: 1px solid rgba(91, 91, 214, 0.45);
+      color: #A5B4FC; margin-left: 6px;
+    }
+    .brand-sub { font-size: 9.5px; color: var(--text-dim); }
+    .top-right { display: flex; align-items: center; gap: 10px; }
+    .status-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      color: #6EE7B7; font-size: 10px; font-weight: 700;
+    }
+    .dot-live {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #10B981; box-shadow: 0 0 8px #10B981;
+    }
+
+    /* Main Split Layout */
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 345px;
+      min-width: 320px;
+      background: var(--bg-panel);
+      border-right: 1px solid var(--border-subtle);
+      overflow-y: auto;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Sidebar Boxes */
+    .box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .box-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .box-title {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: #CBD5E1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pill-toggle {
+      display: inline-flex; align-items: center; gap: 5px;
+      cursor: pointer; user-select: none;
+      font-size: 9px; font-weight: 800;
+      padding: 2px 7px; border-radius: 4px;
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      background: rgba(56, 189, 248, 0.12);
+      color: #7DD3FC;
+    }
+    .pill-toggle.off {
+      border-color: #334155;
+      background: #0F172A;
+      color: #64748B;
+    }
+    .pill-toggle input { display: none; }
+
+    /* Aspect Ratio Buttons */
+    .aspect-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .btn-aspect {
+      padding: 7px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-input);
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+    .btn-aspect:hover { border-color: #475569; color: #fff; }
+    .btn-aspect.active {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: #38BDF8;
+      color: #E0F2FE;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.18);
+    }
+
+    /* Inputs & Textareas */
+    textarea, input[type="text"] {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      color: #F8FAFC;
+      padding: 7px 9px;
+      font-size: 11px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    textarea:focus, input[type="text"]:focus { border-color: var(--border-focus); }
+    textarea { resize: vertical; min-height: 54px; }
+
+    /* Reference Upload Bar & Multi-Thumb Grid */
+    .upload-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .btn-upload {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 9px; border-radius: 6px;
+      border: 1px solid #334155;
+      background: #111827;
+      color: #E2E8F0;
+      font-size: 10px; font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-upload:hover { border-color: #38BDF8; color: #fff; }
+    .btn-mini {
+      padding: 4px 7px; border-radius: 5px;
+      border: 1px solid #334155;
+      background: #0F172A;
+      color: #94A3B8;
+      font-size: 9.5px; font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-mini:hover { color: #fff; border-color: #475569; }
+    .ref-thumbs {
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .ref-thumb-item {
+      position: relative;
+      width: 46px; height: 46px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #38BDF8;
+      background: #05070B;
+    }
+    .ref-thumb-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ref-remove {
+      position: absolute; top: 2px; right: 2px;
+      width: 15px; height: 15px; border-radius: 50%;
+      background: rgba(239, 68, 68, 0.92);
+      color: #fff; border: none; font-size: 10px; line-height: 1;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+
+    /* Negative Prompt Chips */
+    .neg-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .neg-chip {
+      padding: 3px 7px; border-radius: 999px;
+      font-size: 9.5px; font-weight: 700;
+      border: 1px solid #334155;
+      background: #0F172A;
+      color: #94A3B8;
+      cursor: pointer;
+      user-select: none;
+    }
+    .neg-chip.active {
+      background: rgba(239, 68, 68, 0.16);
+      border-color: rgba(239, 68, 68, 0.55);
+      color: #FCA5A5;
+    }
+
+    /* Action Buttons */
+    .btn-primary {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      background: linear-gradient(135deg, #5B5BD6, #7C3AED);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(91, 91, 214, 0.35);
+      transition: transform 0.1s, opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.95; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .btn-secondary {
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0F172A;
+      color: #CBD5E1;
+      font-size: 10px; font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-secondary:hover { border-color: #475569; color: #fff; }
+    .btn-danger {
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      background: rgba(239, 68, 68, 0.12);
+      color: #FCA5A5;
+      font-size: 10px; font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Gallery Main Area */
+    .main-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+      background: var(--bg-app);
+    }
+    .gallery-toolbar {
+      padding: 10px 16px;
+      background: #07090E;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .gallery-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .gallery-title { font-size: 11px; font-weight: 800; letter-spacing: 0.7px; color: #E2E8F0; }
+    .ready-badge {
+      padding: 3px 8px; border-radius: 4px;
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #6EE7B7; font-size: 10px; font-weight: 800;
+    }
+    .live-log { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+    .toolbar-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .btn-tool {
+      padding: 5px 10px; border-radius: 6px;
+      border: 1px solid #334155;
+      background: #0F172A;
+      color: #E2E8F0;
+      font-size: 10px; font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-tool:hover { border-color: #38BDF8; }
+    .btn-tool.amber { border-color: rgba(245, 158, 11, 0.45); color: #FCD34D; background: rgba(245, 158, 11, 0.1); }
+    .btn-tool.amber:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Gallery Grid */
+    #image-grid {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      align-content: start;
+    }
+    @media (max-width: 1400px) { #image-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 1050px) { #image-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 700px) {
+      .workspace { flex-direction: column; overflow-y: auto; }
+      .sidebar { width: 100%; max-height: 48vh; }
+      #image-grid { grid-template-columns: 1fr; }
+    }
+
+    .empty-state {
+      grid-column: 1 / -1;
+      border: 1px dashed #1E293B;
+      border-radius: 12px;
+      padding: 48px 20px;
+      text-align: center;
+      color: var(--text-dim);
+      background: rgba(10, 15, 29, 0.5);
+    }
+    .empty-state h3 { color: #CBD5E1; font-size: 14px; margin-bottom: 6px; }
+
+    /* Shot Card */
+    .image-card-group {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s;
+    }
+    .image-card-group.card-failed { border-color: #EF4444; }
+    .image-card-group.card-ready { border-color: rgba(16, 185, 129, 0.4); }
+    .card-head {
+      padding: 7px 10px;
+      background: var(--bg-card-header);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .card-time { color: #93C5FD; font-family: var(--font-mono); }
+    .card-status {
+      padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: 800;
+    }
+    .st-pending { background: rgba(56, 189, 248, 0.14); color: #7DD3FC; }
+    .st-ready { background: rgba(16, 185, 129, 0.16); color: #6EE7B7; }
+    .st-failed { background: rgba(239, 68, 68, 0.18); color: #FCA5A5; }
+
+    .card-media {
+      position: relative;
+      width: 100%;
+      background: #05070B;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .ratio-16-9 { aspect-ratio: 16 / 9; }
+    .ratio-9-16 { aspect-ratio: 9 / 16; max-height: 360px; }
+    .ratio-1-1 { aspect-ratio: 1 / 1; }
+    .card-media img {
+      width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; display: block;
+    }
+    .spinner {
+      width: 26px; height: 26px; border-radius: 50%;
+      border: 3px solid #1E293B; border-top-color: #38BDF8;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .err-box {
+      padding: 12px; text-align: center; color: #FCA5A5; font-size: 10px;
+    }
+
+    .hidden { display: none !important; }
+    .card-body { padding: 9px 10px; display: flex; flex-direction: column; gap: 6px; }
+    .card-file { font-family: var(--font-mono); font-size: 9.5px; color: #FBBF24; word-break: break-all; }
+    .card-prompt {
+      font-size: 10.5px; color: #CBD5E1;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .card-actions {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 2px;
+    }
+    .card-btn {
+      padding: 5px; border-radius: 5px;
+      border: 1px solid #334155; background: #0F172A; color: #E2E8F0;
+      font-size: 9.5px; font-weight: 700; cursor: pointer;
+    }
+    .card-btn:hover { border-color: #38BDF8; color: #fff; }
+    .card-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Toast & Lightbox */
+    .toast {
+      position: fixed; bottom: 18px; right: 18px;
+      padding: 9px 14px; border-radius: 8px;
+      background: #0F172A; border: 1px solid #38BDF8; color: #fff;
+      font-size: 11px; font-weight: 700;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.55);
+      z-index: 100; display: none;
+    }
+    .lightbox {
+      position: fixed; inset: 0; background: rgba(2, 6, 23, 0.9);
+      display: none; align-items: center; justify-content: center;
+      z-index: 120; padding: 24px;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 10px; border: 1px solid #334155; }
+    .lightbox-close {
+      position: fixed; top: 18px; right: 22px;
+      padding: 7px 12px; border-radius: 6px;
+      background: #1E293B; color: #fff; border: 1px solid #475569;
+      font-weight: 800; cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="logo-group">
+      <div class="ris-badge">RIS</div>
+      <div>
+        <div>
+          <span class="brand-title">RenderX Canvas Studio</span>
+          <span class="brand-ver">CUSTOM ENGINE</span>
+        </div>
+        <div class="brand-sub">Self-Hosted Gemini Canvas • Multi-Ref &amp; Timeline Production</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <div class="status-pill"><span class="dot-live"></span> Gemini Canvas Runtime Ready</div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- Left Control Sidebar -->
+    <aside class="sidebar">
+      <!-- Box 1: Aspect Ratio -->
+      <section class="box">
+        <div class="box-header">
+          <div class="box-title">📐 Aspect Ratio &amp; Format</div>
+        </div>
+        <select id="aspectRatio" style="display:none;">
+          <option value="landscape" selected>16:9</option>
+          <option value="portrait">9:16</option>
+          <option value="square">1:1</option>
+        </select>
+        <div class="aspect-grid">
+          <button type="button" class="btn-aspect active" data-aspect="16:9">16:9 Desktop</button>
+          <button type="button" class="btn-aspect" data-aspect="9:16">9:16 Reels</button>
+          <button type="button" class="btn-aspect" data-aspect="1:1">1:1 Square</button>
+        </div>
+      </section>
+
+      <!-- Box 2: Multiple Character / Subject Reference Images -->
+      <section class="box">
+        <div class="box-header">
+          <div class="box-title">👤 Character / Ref Images</div>
+          <label class="pill-toggle" id="ccToggleLabel">
+            <input type="checkbox" id="ccToggle" checked />
+            <span id="ccToggleText">ACTIVE</span>
+          </label>
+        </div>
+        <div id="ccOptionsContainer" style="display:flex;flex-direction:column;gap:7px;">
+          <textarea id="ccText" class="cc-text-input" placeholder="Character / subject details (e.g. Young space explorer wearing a blue jacket)..."></textarea>
+          <div class="upload-row">
+            <label class="btn-upload">
+              📁 Add Ref Images (Multi)
+              <input type="file" id="ccImageInput" class="cc-image-input" accept="image/*" multiple style="display:none;" />
+            </label>
+            <button type="button" id="clearAllCcBtn" class="btn-mini">Clear Refs (<span id="ccCountBadge">0</span>)</button>
+          </div>
+          <div id="ccThumbsGrid" class="ref-thumbs"></div>
+        </div>
+      </section>
+
+      <!-- Box 3: Style Consistency -->
+      <section class="box">
+        <div class="box-header">
+          <div class="box-title">🎨 Style Consistency</div>
+          <label class="pill-toggle" id="scToggleLabel">
+            <input type="checkbox" id="scToggle" checked />
+            <span id="scToggleText">ACTIVE</span>
+          </label>
+        </div>
+        <div id="scOptionsContainer" style="display:flex;flex-direction:column;gap:7px;">
+          <textarea id="scText" placeholder="Style description (e.g. 3D stylized animated cinema look, warm sunset rim light)..."></textarea>
+          <div class="upload-row">
+            <label class="btn-upload">
+              🎨 Upload Style Ref
+              <input type="file" id="scImage" accept="image/*" style="display:none;" />
+            </label>
+            <button type="button" id="clearScBtn" class="btn-mini">Clear Style</button>
+          </div>
+          <div id="scImagePreviewContainer" class="ref-thumbs hidden"></div>
+        </div>
+      </section>
+
+      <!-- Box 4: Negative Prompts -->
+      <section class="box">
+        <div class="box-header">
+          <div class="box-title">🚫 Negative Prompts</div>
+          <span id="negCountBadge" style="font-size:9.5px;color:#FCA5A5;font-weight:800;">6 ACTIVE</span>
+        </div>
+        <div class="neg-chips" id="negChips">
+          <span class="neg-chip active" data-term="bad anatomy">Bad Anatomy</span>
+          <span class="neg-chip active" data-term="extra fingers">Extra Fingers</span>
+          <span class="neg-chip active" data-term="blurry">Blurry</span>
+          <span class="neg-chip active" data-term="distorted face">Distorted Face</span>
+          <span class="neg-chip active" data-term="low quality">Low Quality</span>
+          <span class="neg-chip active" data-term="watermark">Watermark</span>
+          <span class="neg-chip" data-term="text artifacts">Text Artifacts</span>
+        </div>
+        <input type="text" id="customNegInput" placeholder="Additional negative terms (comma separated)..." />
+      </section>
+
+      <!-- Box 5: Timeline & Batch Prompts -->
+      <section class="box">
+        <div class="box-header">
+          <div class="box-title">🎬 Timeline / Batch Prompts</div>
+          <div style="display:flex;gap:5px;align-items:center;">
+            <button type="button" id="sampleBtn" class="btn-mini">Sample</button>
+            <span id="promptCountBadge" style="padding:2px 6px;border-radius:4px;background:rgba(56,189,248,0.16);color:#7DD3FC;font-weight:800;">0</span>
+          </div>
+        </div>
+        <textarea id="prompt-input" rows="5" placeholder="00.00-04.00 | Explorer standing on a red Mars cliff&#10;04.00-08.00 | Explorer examining a glowing hologram&#10;(Or write plain prompts without timestamps for prompt-based filenames)"></textarea>
+        <button type="button" id="generate-btn" class="btn-primary">⚡ Generate 0 Images</button>
+        <div class="btn-row">
+          <button type="button" id="stop-btn" class="btn-danger" disabled>■ Stop Batch</button>
+          <button type="button" id="download-all-btn" class="btn-secondary">📦 Download ZIP</button>
+        </div>
+      </section>
+    </aside>
+
+    <!-- Right Studio Shots Gallery -->
+    <main class="main-area">
+      <div class="gallery-toolbar">
+        <div class="gallery-title-row">
+          <span class="gallery-title">STUDIO SHOTS GALLERY</span>
+          <span class="ready-badge" id="readyBadge">0 / 0 READY</span>
+          <span class="live-log" id="liveLog">Ready — enter timeline or plain prompts on the left.</span>
+        </div>
+        <div class="toolbar-actions">
+          <button type="button" id="regenFailedBtn" class="btn-tool amber" disabled>🔄 Regenerate Failed</button>
+          <button type="button" id="clearGalleryBtn" class="btn-tool">🗑 Clear Gallery</button>
+          <button type="button" id="topDownloadZipBtn" class="btn-tool">📦 Download All (.zip)</button>
+        </div>
+      </div>
+
+      <div id="image-grid">
+        <div class="empty-state" id="emptyState">
+          <h3>No Shots Generated Yet</h3>
+          <p>Add multiple reference images, style, negative prompts, and timeline/batch prompts on the left to start.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="lightbox" class="lightbox">
+    <button type="button" class="lightbox-close" id="lightboxClose">✕ Close</button>
+    <img id="lightboxImg" src="" alt="Preview" />
+  </div>
+
+  <script>
+    (() => {
+      const IMAGE_API_MODEL = 'gemini-3.1-flash-image';
+      const IMAGE_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_API_MODEL}:generateContent?key=`;
+      const MAX_RETRIES = 4;
+
+      const state = {
+        aspect: '16:9',
+        ccEnabled: true,
+        scEnabled: true,
+        ccRefs: [], // [{ id, mimeType, data, dataUrl }]
+        scRef: null, // { mimeType, data, dataUrl }
+        isRunning: false,
+        isStopping: false,
+        shots: [], // [{ index, rawLine, timeline, prompt, filename, status, dataUrl, base64, mimeType, error }]
+      };
+
+      const el = (id) => document.getElementById(id);
+      const promptInput = el('prompt-input');
+      const generateBtn = el('generate-btn');
+      const stopBtn = el('stop-btn');
+      const imageGrid = el('image-grid');
+      const emptyState = el('emptyState');
+      const readyBadge = el('readyBadge');
+      const liveLog = el('liveLog');
+      const regenFailedBtn = el('regenFailedBtn');
+
+      function showToast(msg) {
+        const t = el('toast');
+        t.textContent = msg;
+        t.style.display = 'block';
+        clearTimeout(t._timer);
+        t._timer = setTimeout(() => { t.style.display = 'none'; }, 2800);
+      }
+
+      function setLog(msg) {
+        liveLog.textContent = msg;
+      }
+
+      // Aspect ratio switching (synced with hidden #aspectRatio for RenderX Studio)
+      const arValueToLabel = { landscape: '16:9', portrait: '9:16', square: '1:1' };
+      const arLabelToValue = { '16:9': 'landscape', '9:16': 'portrait', '1:1': 'square' };
+      function setAspectUI(aspectLabel) {
+        state.aspect = aspectLabel;
+        document.querySelectorAll('.btn-aspect').forEach(b => b.classList.toggle('active', b.dataset.aspect === aspectLabel));
+        el('aspectRatio').value = arLabelToValue[aspectLabel] || 'landscape';
+      }
+      document.querySelectorAll('.btn-aspect').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setAspectUI(btn.dataset.aspect);
+          showToast(`Aspect ratio set to ${state.aspect}`);
+        });
+      });
+      el('aspectRatio').addEventListener('change', (e) => {
+        setAspectUI(arValueToLabel[e.target.value] || '16:9');
+      });
+
+      // Toggle switches
+      function syncToggleUI(checkbox, labelEl, textEl, containerEl, key) {
+        const on = checkbox.checked;
+        state[key] = on;
+        labelEl.classList.toggle('off', !on);
+        textEl.textContent = on ? 'ACTIVE' : 'OFF';
+        containerEl.classList.toggle('hidden', !on);
+      }
+      el('ccToggle').addEventListener('change', () => syncToggleUI(el('ccToggle'), el('ccToggleLabel'), el('ccToggleText'), el('ccOptionsContainer'), 'ccEnabled'));
+      el('scToggle').addEventListener('change', () => syncToggleUI(el('scToggle'), el('scToggleLabel'), el('scToggleText'), el('scOptionsContainer'), 'scEnabled'));
+
+      // Multiple Character / Reference images
+      function renderCcThumbs() {
+        const grid = el('ccThumbsGrid');
+        grid.innerHTML = '';
+        el('ccCountBadge').textContent = String(state.ccRefs.length);
+        state.ccRefs.forEach((ref, idx) => {
+          const item = document.createElement('div');
+          item.className = 'ref-thumb-item';
+          item.innerHTML = `<img src="${ref.dataUrl}" alt="Ref ${idx + 1}" /><button type="button" class="ref-remove" title="Remove">×</button>`;
+          item.querySelector('.ref-remove').addEventListener('click', () => {
+            state.ccRefs.splice(idx, 1);
+            renderCcThumbs();
+          });
+          grid.appendChild(item);
+        });
+      }
+
+      el('ccImageInput').addEventListener('change', async (e) => {
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
+        for (const file of files) {
+          const dataUrl = await readFileAsDataUrl(file);
+          state.ccRefs.push({
+            id: `${Date.now()}_${Math.random()}`,
+            mimeType: file.type || 'image/png',
+            data: dataUrl.split(',')[1],
+            dataUrl,
+          });
+        }
+        el('ccToggle').checked = true;
+        syncToggleUI(el('ccToggle'), el('ccToggleLabel'), el('ccToggleText'), el('ccOptionsContainer'), 'ccEnabled');
+        renderCcThumbs();
+        showToast(`${files.length} reference image(s) attached`);
+        e.target.value = '';
+      });
+
+      el('clearAllCcBtn').addEventListener('click', () => {
+        state.ccRefs = [];
+        renderCcThumbs();
+      });
+
+      // Style Reference image
+      function renderScThumb() {
+        const grid = el('scImagePreviewContainer');
+        grid.innerHTML = '';
+        if (!state.scRef) {
+          grid.classList.add('hidden');
+          return;
+        }
+        grid.classList.remove('hidden');
+        const item = document.createElement('div');
+        item.className = 'ref-thumb-item';
+        item.innerHTML = `<img src="${state.scRef.dataUrl}" alt="Style Ref" /><button type="button" class="ref-remove" title="Remove">×</button>`;
+        item.querySelector('.ref-remove').addEventListener('click', () => {
+          state.scRef = null;
+          renderScThumb();
+        });
+        grid.appendChild(item);
+      }
+
+      el('scImage').addEventListener('change', async (e) => {
+        const file = (e.target.files || [])[0];
+        if (!file) return;
+        const dataUrl = await readFileAsDataUrl(file);
+        state.scRef = { mimeType: file.type || 'image/png', data: dataUrl.split(',')[1], dataUrl };
+        el('scToggle').checked = true;
+        syncToggleUI(el('scToggle'), el('scToggleLabel'), el('scToggleText'), el('scOptionsContainer'), 'scEnabled');
+        renderScThumb();
+        showToast('Style reference image attached');
+        e.target.value = '';
+      });
+
+      el('clearScBtn').addEventListener('click', () => {
+        state.scRef = null;
+        renderScThumb();
+      });
+
+      function readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }
+
+      // Negative chips
+      function updateNegCount() {
+        const active = document.querySelectorAll('.neg-chip.active').length;
+        const extra = el('customNegInput').value.split(',').map(s => s.trim()).filter(Boolean).length;
+        el('negCountBadge').textContent = `${active + extra} ACTIVE`;
+      }
+      document.querySelectorAll('.neg-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          chip.classList.toggle('active');
+          updateNegCount();
+        });
+      });
+      el('customNegInput').addEventListener('input', updateNegCount);
+
+      function getNegativePromptText() {
+        const chips = Array.from(document.querySelectorAll('.neg-chip.active')).map(c => c.dataset.term);
+        const custom = el('customNegInput').value.split(',').map(s => s.trim()).filter(Boolean);
+        return [...new Set([...chips, ...custom])].join(', ');
+      }
+
+      // Smart Timeline & Prompt-Based Filename Parser
+      function slugify(str, maxLen = 44) {
+        return str.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, maxLen) || 'shot';
+      }
+
+      function parsePrompts() {
+        const lines = promptInput.value.split('\n').map(l => l.trim()).filter(Boolean);
+        return lines.map((line, idx) => {
+          const pad = String(idx + 1).padStart(2, '0');
+          // Match "00.00-04.00 | prompt" or "00:00-00:04 | prompt" or "00.00-04.00 - prompt"
+          const m = line.match(/^(\d{1,2}[:.]\d{2}\s*[-–—]\s*\d{1,2}[:.]\d{2})\s*[|:\-–—]\s*(.+)$/);
+          if (m) {
+            const timeline = m[1].replace(/\s+/g, '').replace(/:/g, '.');
+            const prompt = m[2].trim();
+            return { index: idx, rawLine: line, timeline, prompt, filename: `${pad}_${timeline}.png` };
+          }
+          const prompt = line;
+          const cleanSlug = slugify(prompt, 40);
+          return { index: idx, rawLine: line, timeline: `Shot #${pad}`, prompt, filename: `${pad}_${cleanSlug}.png` };
+        });
+      }
+
+      function updatePromptCount() {
+        const parsed = parsePrompts();
+        el('promptCountBadge').textContent = String(parsed.length);
+        if (!state.isRunning) {
+          generateBtn.textContent = `⚡ Generate ${parsed.length} ${parsed.length === 1 ? 'Image' : 'Images'}`;
+        }
+      }
+      promptInput.addEventListener('input', updatePromptCount);
+
+      el('sampleBtn').addEventListener('click', () => {
+        promptInput.value = [
+          '00.00-04.00 | Explorer standing on a red Mars cliff at golden sunset',
+          '04.00-08.00 | Explorer examining a glowing blue hologram inside a Mars dome',
+        ].join('\n');
+        updatePromptCount();
+      });
+
+      function updateStats() {
+        const total = state.shots.length;
+        const ready = state.shots.filter(s => s.status === 'ready').length;
+        const failed = state.shots.filter(s => s.status === 'failed').length;
+        readyBadge.textContent = `${ready} / ${total} READY`;
+        regenFailedBtn.disabled = failed === 0 || state.isRunning;
+      }
+
+      function ratioClass() {
+        if (state.aspect === '9:16') return 'ratio-9-16';
+        if (state.aspect === '1:1') return 'ratio-1-1';
+        return 'ratio-16-9';
+      }
+
+      function renderCard(shot) {
+        let card = document.getElementById(`shot-card-${shot.index}`);
+        if (!card) {
+          if (emptyState) emptyState.style.display = 'none';
+          card = document.createElement('div');
+          card.id = `shot-card-${shot.index}`;
+          card.className = 'image-card-group';
+          imageGrid.appendChild(card);
+        }
+
+        card.classList.remove('card-ready', 'card-failed');
+        if (shot.status === 'ready') card.classList.add('card-ready');
+        if (shot.status === 'failed') card.classList.add('card-failed');
+
+        const statusBadge =
+          shot.status === 'ready' ? '<span class="card-status st-ready">Ready</span>' :
+          shot.status === 'failed' ? '<span class="card-status st-failed">Failed</span>' :
+          '<span class="card-status st-pending">Generating...</span>';
+
+        let mediaHtml = '<div class="spinner"></div>';
+        if (shot.status === 'ready' && shot.dataUrl) {
+          mediaHtml = `<img src="${shot.dataUrl}" alt="${escapeHtml(shot.filename)}" />`;
+        } else if (shot.status === 'failed') {
+          mediaHtml = `<div class="err-box">❌ ${escapeHtml(shot.error || 'Generation failed')}</div>`;
+        }
+
+        card.innerHTML = `
+          <div class="card-head">
+            <span class="card-time">${escapeHtml(shot.timeline)}</span>
+            ${statusBadge}
+          </div>
+          <div class="card-media ${ratioClass()}">${mediaHtml}</div>
+          <div class="card-body">
+            <div class="card-file">📁 ${escapeHtml(shot.filename)}</div>
+            <div class="card-prompt" title="${escapeHtml(shot.prompt)}">${escapeHtml(shot.prompt)}</div>
+            <div class="card-actions">
+              <button type="button" class="card-btn btn-view" ${shot.status === 'ready' ? '' : 'disabled'}>🔍 View</button>
+              <button type="button" class="card-btn btn-regen" ${shot.status === 'pending' ? 'disabled' : ''}>🔄 Regen</button>
+              <button type="button" class="card-btn btn-save" ${shot.status === 'ready' ? '' : 'disabled'}>💾 Save</button>
+            </div>
+          </div>
+        `;
+
+        const imgEl = card.querySelector('.card-media img');
+        if (imgEl) imgEl.addEventListener('click', () => openLightbox(shot.dataUrl));
+        card.querySelector('.btn-view').addEventListener('click', () => openLightbox(shot.dataUrl));
+        card.querySelector('.btn-regen').addEventListener('click', () => regenerateSingle(shot.index));
+        card.querySelector('.btn-save').addEventListener('click', () => downloadSingle(shot));
+      }
+
+      function escapeHtml(str) {
+        return String(str || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+      }
+
+      function openLightbox(src) {
+        if (!src) return;
+        el('lightboxImg').src = src;
+        el('lightbox').classList.add('open');
+      }
+      el('lightboxClose').addEventListener('click', () => el('lightbox').classList.remove('open'));
+      el('lightbox').addEventListener('click', (e) => { if (e.target === el('lightbox')) el('lightbox').classList.remove('open'); });
+
+      function downloadSingle(shot) {
+        if (!shot.dataUrl) return;
+        const a = document.createElement('a');
+        a.href = shot.dataUrl;
+        a.download = shot.filename;
+        a.click();
+      }
+
+      async function callGeminiCanvasImage(promptText) {
+        const parts = [];
+
+        if (state.ccEnabled && state.ccRefs.length > 0) {
+          parts.push({ text: `Use the following ${state.ccRefs.length} reference image(s) as the STRICT VISUAL REFERENCE for the character/subject appearance in this scene.` });
+          for (const ref of state.ccRefs) {
+            parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.data } });
+          }
+        }
+        if (state.ccEnabled && el('ccText').value.trim()) {
+          parts.push({ text: `Character / Subject Consistency: ${el('ccText').value.trim()}` });
+        }
+
+        if (state.scEnabled && state.scRef) {
+          parts.push({ text: 'Use this image as the STRICT REFERENCE for the artistic style, color palette, lighting, and visual mood:' });
+          parts.push({ inlineData: { mimeType: state.scRef.mimeType, data: state.scRef.data } });
+        }
+        if (state.scEnabled && el('scText').value.trim()) {
+          parts.push({ text: `Visual Style Consistency: ${el('scText').value.trim()}` });
+        }
+
+        const negText = getNegativePromptText();
+        let finalPrompt = `Generate a high-quality image for this scene: ${promptText}`;
+        if (negText) finalPrompt += `\nStrictly avoid / do not include: ${negText}`;
+        parts.push({ text: finalPrompt });
+
+        const payload = {
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+            imageConfig: { aspectRatio: state.aspect }
+          }
+        };
+
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          if (state.isStopping) throw new Error('Stopped by user');
+          try {
+            const resp = await fetch(IMAGE_API_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+              let msg = `HTTP ${resp.status}`;
+              try { const err = await resp.json(); msg = err.error?.message || msg; } catch {}
+              throw new Error(msg);
+            }
+            const json = await resp.json();
+            const part = json?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+            const b64 = part?.inlineData?.data;
+            const mime = part?.inlineData?.mimeType || 'image/png';
+            if (!b64) throw new Error('No image returned (safety filter or empty response).');
+            return { base64: b64, mimeType: mime, dataUrl: `data:${mime};base64,${b64}` };
+          } catch (err) {
+            if (attempt === MAX_RETRIES - 1 || state.isStopping) throw err;
+            await new Promise(r => setTimeout(r, 700 * Math.pow(2, attempt)));
+          }
+        }
+      }
+
+      async function generateShot(shot) {
+        shot.status = 'pending';
+        shot.error = null;
+        renderCard(shot);
+        updateStats();
+        setLog(`Generating ${shot.filename}...`);
+        try {
+          const res = await callGeminiCanvasImage(shot.prompt);
+          shot.status = 'ready';
+          shot.base64 = res.base64;
+          shot.mimeType = res.mimeType;
+          shot.dataUrl = res.dataUrl;
+          setLog(`Saved ${shot.filename}`);
+        } catch (err) {
+          shot.status = 'failed';
+          shot.error = err.message || 'Generation failed';
+          setLog(`Failed ${shot.filename}: ${shot.error}`);
+        }
+        renderCard(shot);
+        updateStats();
+      }
+
+      async function startBatch() {
+        const parsed = parsePrompts();
+        if (!parsed.length) {
+          showToast('Please enter at least 1 prompt');
+          return;
+        }
+        state.isRunning = true;
+        state.isStopping = false;
+        generateBtn.disabled = true;
+        generateBtn.textContent = '⏳ Generating Batch...';
+        stopBtn.disabled = false;
+
+        imageGrid.innerHTML = '';
+        state.shots = parsed.map(p => ({ ...p, status: 'pending', dataUrl: null, base64: null, mimeType: null, error: null }));
+        state.shots.forEach(renderCard);
+        updateStats();
+
+        for (const shot of state.shots) {
+          if (state.isStopping) {
+            if (shot.status === 'pending') {
+              shot.status = 'failed';
+              shot.error = 'Stopped by user';
+              renderCard(shot);
+            }
+            continue;
+          }
+          await generateShot(shot);
+        }
+
+        state.isRunning = false;
+        stopBtn.disabled = true;
+        generateBtn.disabled = false;
+        updatePromptCount();
+        updateStats();
+        const readyCount = state.shots.filter(s => s.status === 'ready').length;
+        setLog(`Completed: ${readyCount}/${state.shots.length} shots ready.`);
+        showToast(`Batch finished (${readyCount}/${state.shots.length} ready)`);
+      }
+
+      async function regenerateSingle(index) {
+        const shot = state.shots[index];
+        if (!shot) return;
+        state.isStopping = false;
+        await generateShot(shot);
+      }
+
+      async function regenerateAllFailed() {
+        const failedShots = state.shots.filter(s => s.status === 'failed');
+        if (!failedShots.length) return;
+        state.isRunning = true;
+        state.isStopping = false;
+        generateBtn.disabled = true;
+        stopBtn.disabled = false;
+        for (const shot of failedShots) {
+          if (state.isStopping) break;
+          await generateShot(shot);
+        }
+        state.isRunning = false;
+        stopBtn.disabled = true;
+        generateBtn.disabled = false;
+        updatePromptCount();
+        updateStats();
+      }
+
+      async function downloadAllZip() {
+        const readyShots = state.shots.filter(s => s.status === 'ready' && s.base64);
+        if (!readyShots.length) {
+          showToast('No ready images to download');
+          return;
+        }
+        if (typeof JSZip === 'undefined') {
+          readyShots.forEach(downloadSingle);
+          showToast('Downloaded images individually (JSZip unavailable)');
+          return;
+        }
+        const zip = new JSZip();
+        readyShots.forEach(shot => zip.file(shot.filename, shot.base64, { base64: true }));
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `RenderX_Canvas_Batch_${Date.now()}.zip`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        showToast(`Downloaded ${readyShots.length} images as ZIP`);
+      }
+
+      generateBtn.addEventListener('click', startBatch);
+      stopBtn.addEventListener('click', () => { state.isStopping = true; showToast('Stopping after current shot...'); });
+      regenFailedBtn.addEventListener('click', regenerateAllFailed);
+      el('download-all-btn').addEventListener('click', downloadAllZip);
+      el('topDownloadZipBtn').addEventListener('click', downloadAllZip);
+      el('clearGalleryBtn').addEventListener('click', () => {
+        if (state.isRunning) return;
+        state.shots = [];
+        imageGrid.innerHTML = '';
+        imageGrid.appendChild(emptyState);
+        emptyState.style.display = 'block';
+        updateStats();
+        setLog('Gallery cleared.');
+      });
+
+      updatePromptCount();
+      updateNegCount();
+      updateStats();
+    })();
+  </script>
+</body>
+</html>
