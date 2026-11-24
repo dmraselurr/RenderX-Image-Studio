@@ -134,6 +134,12 @@
                   <button type="button" class="btn-preview-remove" id="flowInitFrameRemoveBtn" title="Remove Frame">✕</button>
                 </div>
               </div>
+
+              <!-- Flow Agent vs Fast Direct Speed Switch -->
+              <label style="display:flex; align-items:center; justify-content:space-between; gap:6px; padding:4px 6px; background:#080D1A; border:1px solid #1E293B; border-radius:6px; font-size:9.5px; color:#94A3B8; cursor:pointer;" title="Checked = Flow Agent Mode (smart planning + multi-prompt). Unchecked = Direct Prompt Bar (skips Agent 'Thinking...' delay for 2x speed)">
+                <span>🤖 Flow Agent Mode <small style="color:#38BDF8;">(Uncheck for 2x Direct Speed)</small></span>
+                <input type="checkbox" id="flowAgentToggle" checked style="accent-color:#38BDF8;">
+              </label>
             </div>
 
             <!-- Aspect Ratio Selector (16:9 Desktop | 9:16 Reels/Vertical | 1:1 Square) -->
