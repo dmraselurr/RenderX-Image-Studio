@@ -24,7 +24,7 @@
       </div>
 
       <div class="logo-text">
-        <h1>RenderX Image Studio <span class="badge-version">v1.0.2 PRO</span></h1>
+        <h1>RenderX Image Studio <span class="badge-version">v1.0.3 PRO</span></h1>
         <p>AI Video Timeline &amp; Consistency Generator</p>
       </div>
     </div>
@@ -228,12 +228,14 @@
 
     <!-- Right Main Canvas: 4-Column Responsive Grid -->
     <main class="main-canvas">
-      <!-- Canvas Status & Filter Toolbar -->
+      <!-- Canvas Status & Filter Toolbar matching RenderX Studio Pro -->
       <div class="canvas-toolbar">
         <div class="stats-group">
-          <span class="stat-item">Total: <strong id="statTotal">0</strong></span>
-          <span class="stat-item">Generated: <strong id="statGenerated">0</strong></span>
-          <span class="stat-item">Remaining: <strong id="statRemaining">0</strong></span>
+          <span style="font-weight: 800; color: #FFFFFF; display: flex; align-items: center; gap: 6px; font-size: 11px;">
+            <span>🎞️</span><span>STUDIO SHOTS GALLERY</span>
+          </span>
+          <span class="gallery-ready-pill" id="galleryReadyPill">0 READY (STANDBY GRID)</span>
+          <span class="gallery-timeline-hint" id="galleryTimelineHint">Timeline Ordered: 00.00-08.04.png</span>
           
           <!-- Progress Bar -->
           <div class="progress-bar-container" id="progressBar">
@@ -242,75 +244,129 @@
         </div>
 
         <div class="canvas-actions">
-          <button class="btn-card-action" id="clearGalleryBtn" style="color: #EF4444; border-color: rgba(239, 68, 68, 0.4);">🗑️ Clear Gallery</button>
+          <button class="btn-gallery-action danger" id="resetShootGalleryBtn">🗑️ Reset Shoot Gallery</button>
+          <button class="btn-gallery-action warning" id="downloadAllZipTopBtn">📦 Download All (.zip)</button>
+          <button class="btn-gallery-action success" id="pushTimelineBtn">🚀 Push All to Video Timeline -></button>
         </div>
       </div>
 
       <!-- 4-Column Gallery Grid (Always 4 Columns per Row) -->
       <div class="gallery-container">
         <div class="gallery-grid" id="galleryGrid">
-          <!-- Default Row 1: Exactly 4 Dummy Boxes on 1 Line -->
+          <!-- Default Row 1: Exactly 4 Dummy Boxes on 1 Line matching Image 2 -->
           <div class="dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 00.00 - 04.35</span>
+              <span class="badge-standby">Standby</span>
+            </div>
             <div class="dummy-preview">
-              <span class="timestamp-badge">00.00 - 04.35</span>
-              <span class="card-index">#01</span>
-              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
               <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #1 Ready</span>
             </div>
-            <div class="dummy-meta">
-              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 01_00.00-04.35.png</span>
+            <div class="card-meta">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="card-filename">📁 01_00.00-04.35.png</span>
+                <span class="card-index">#01</span>
               </div>
-              <div class="dummy-line" style="width: 80%;"></div>
-              <div class="dummy-line" style="width: 50%;"></div>
+              <div class="card-prompt-text">Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field...</div>
+              <div class="card-actions-grid">
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
+                  <button class="btn-card-action btn-regen" data-action="regen" data-index="1">🎲 Re-Roll</button>
+                  <button class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
+                </div>
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="final-cut" data-index="1">🎬 Final Cut</button>
+                  <button class="btn-card-action" data-action="auto-merge" data-index="1">🔀 Auto Merge</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 04.35 - 07.83</span>
+              <span class="badge-standby">Standby</span>
+            </div>
             <div class="dummy-preview">
-              <span class="timestamp-badge">04.35 - 07.83</span>
-              <span class="card-index">#02</span>
-              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
               <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #2 Ready</span>
             </div>
-            <div class="dummy-meta">
-              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 02_04.35-07.83.png</span>
+            <div class="card-meta">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="card-filename">📁 02_04.35-07.83.png</span>
+                <span class="card-index">#02</span>
               </div>
-              <div class="dummy-line" style="width: 70%;"></div>
-              <div class="dummy-line" style="width: 40%;"></div>
+              <div class="card-prompt-text">Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting...</div>
+              <div class="card-actions-grid">
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
+                  <button class="btn-card-action btn-regen" data-action="regen" data-index="2">🎲 Re-Roll</button>
+                  <button class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
+                </div>
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="final-cut" data-index="2">🎬 Final Cut</button>
+                  <button class="btn-card-action" data-action="auto-merge" data-index="2">🔀 Auto Merge</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 07.83 - 11.74</span>
+              <span class="badge-standby">Standby</span>
+            </div>
             <div class="dummy-preview">
-              <span class="timestamp-badge">07.83 - 11.74</span>
-              <span class="card-index">#03</span>
-              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
               <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #3 Ready</span>
             </div>
-            <div class="dummy-meta">
-              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 03_07.83-11.74.png</span>
+            <div class="card-meta">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="card-filename">📁 03_07.83-11.74.png</span>
+                <span class="card-index">#03</span>
               </div>
-              <div class="dummy-line" style="width: 85%;"></div>
-              <div class="dummy-line" style="width: 55%;"></div>
+              <div class="card-prompt-text">Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric rim...</div>
+              <div class="card-actions-grid">
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
+                  <button class="btn-card-action btn-regen" data-action="regen" data-index="3">🎲 Re-Roll</button>
+                  <button class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
+                </div>
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="final-cut" data-index="3">🎬 Final Cut</button>
+                  <button class="btn-card-action" data-action="auto-merge" data-index="3">🔀 Auto Merge</button>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 11.74 - 16.52</span>
+              <span class="badge-standby">Standby</span>
+            </div>
             <div class="dummy-preview">
-              <span class="timestamp-badge">11.74 - 16.52</span>
-              <span class="card-index">#04</span>
-              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <div style="font-size: 22px; color: #38BDF8;">🖼️</div>
               <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #4 Ready</span>
             </div>
-            <div class="dummy-meta">
-              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
-                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 04_11.74-16.52.png</span>
+            <div class="card-meta">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="card-filename">📁 04_11.74-16.52.png</span>
+                <span class="card-index">#04</span>
               </div>
-              <div class="dummy-line" style="width: 75%;"></div>
-              <div class="dummy-line" style="width: 45%;"></div>
+              <div class="card-prompt-text">Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh...</div>
+              <div class="card-actions-grid">
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
+                  <button class="btn-card-action btn-regen" data-action="regen" data-index="4">🎲 Re-Roll</button>
+                  <button class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
+                </div>
+                <div class="action-subrow">
+                  <button class="btn-card-action" data-action="final-cut" data-index="4">🎬 Final Cut</button>
+                  <button class="btn-card-action" data-action="auto-merge" data-index="4">🔀 Auto Merge</button>
+                </div>
+              </div>
             </div>
           </div>
 
