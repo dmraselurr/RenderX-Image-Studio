@@ -184,63 +184,71 @@ body {
 
 /* ================= Left Sidebar (RenderX Pro Dock) ================= */
 .sidebar {
-  width: 295px;
-  min-width: 285px;
-  max-width: 315px;
+  width: 320px;
+  min-width: 300px;
+  max-width: 340px;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 14px 20px 14px;
+  overflow-x: hidden;
+  padding: 16px 14px 28px 14px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+  scroll-behavior: smooth;
 }
 
-/* RenderX Pro Card Box with Solid Highlighted Header */
-.rx-box {
+/* Custom Sleek Scrollbar for Sidebar */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-track {
   background: #080C16;
+  border-radius: 8px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #1E293B;
+  border-radius: 8px;
+  border: 1px solid rgba(56, 189, 248, 0.15);
+}
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: #38BDF8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
+}
+
+/* RenderX Pro Card Box — Always Open, Clean & Spacious */
+.rx-box {
+  background: linear-gradient(180deg, #0A0F1D 0%, #060911 100%);
   border: 1px solid #1E293B;
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  overflow: visible;
   height: auto;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .rx-box:hover {
-  border-color: #334155;
-}
-
-.rx-box.collapsed .rx-box-body {
-  display: none;
-}
-
-.rx-box.collapsed .rx-collapse-indicator {
-  transform: rotate(-90deg);
+  border-color: rgba(56, 189, 248, 0.35);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6), 0 0 10px rgba(56, 189, 248, 0.08);
 }
 
 .rx-box-header {
-  background: linear-gradient(180deg, #162032 0%, #0D1524 100%);
-  border-bottom: 1px solid #24344D;
-  padding: 8px 12px;
+  background: linear-gradient(90deg, #152033 0%, #0E1626 100%);
+  border-bottom: 1px solid #1E293B;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  cursor: pointer;
+  cursor: default; /* Always open, not a dropdown */
   user-select: none;
-  transition: all 0.15s ease;
-}
-
-.rx-box-header:hover {
-  background: linear-gradient(180deg, #1E2C44 0%, #111C30 100%);
-  border-bottom-color: #38BDF8;
 }
 
 .rx-box-title {
@@ -254,20 +262,49 @@ body {
   gap: 6px;
 }
 
-.rx-collapse-indicator {
-  font-size: 9px;
-  color: #64748B;
-  transition: transform 0.2s ease;
+.rx-box-badge {
+  font-size: 8.5px;
+  font-weight: 800;
+  color: #38BDF8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.5px;
+}
+
+.box-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #38BDF8;
+  cursor: pointer;
+  user-select: none;
+}
+
+.box-active-toggle.style-toggle {
+  color: #A78BFA;
+}
+
+.box-active-toggle input {
+  accent-color: #38BDF8;
+  cursor: pointer;
+}
+
+.box-active-toggle.style-toggle input {
+  accent-color: #A78BFA;
 }
 
 .rx-box-body {
-  padding: 10px 12px;
-  display: flex;
+  padding: 12px 14px;
+  display: flex !important;
   flex-direction: column;
-  gap: 8px;
-  background: #080C16;
-  height: auto;
-  overflow: visible;
+  gap: 10px;
+  background: transparent;
+  height: auto !important;
+  overflow: visible !important;
 }
 
 .btn-subtle {
