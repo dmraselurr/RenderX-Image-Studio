@@ -29,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Box 1: Engine, Cluster & Aspect Elements
   const btnEngineCanvas = $('btnEngineCanvas');
   const btnEngineFlow = $('btnEngineFlow');
+  const btnEngineVerifyOk = $('btnEngineVerifyOk');
+  const engineOkLabel = $('engineOkLabel');
   const engineActiveBadge = $('engineActiveBadge');
   const clusterStateText = $('clusterStateText');
   const clusterProfileName = $('clusterProfileName');
@@ -140,15 +142,61 @@ document.addEventListener('DOMContentLoaded', () => {
   // ================= 1. Desktop WebSocket & REST Bridge =================
   let ws = null;
 
+  async function verifyPrimaryEngine(showNotice = false) {
+    if (btnEngineVerifyOk) {
+      btnEngineVerifyOk.classList.remove('signal-green', 'signal-red');
+    }
+    if (clusterStateText) {
+      clusterStateText.className = 'cluster-status-val reconnecting';
+      clusterStateText.textContent = '🟡 Reconnecting...';
+    }
+    try {
+      const res = await apiJson('/api/engine/check', 'POST', { engine: state.engine });
+      if (res && res.connected) {
+        if (btnEngineVerifyOk) btnEngineVerifyOk.classList.add('signal-green');
+        if (engineOkLabel) engineOkLabel.textContent = 'OK';
+        if (sessionDot) sessionDot.className = 'dot';
+        if (clusterStateText) {
+          clusterStateText.className = 'cluster-status-val connected';
+          clusterStateText.textContent = `🟢 Connected (${res.enabledLoggedCount || res.loggedInCount || 1} Profile Ready)`;
+        }
+        if (showNotice) showToast(`🟢 ${res.message || 'Connected & Ready!'}`);
+      } else {
+        if (btnEngineVerifyOk) btnEngineVerifyOk.classList.add('signal-red');
+        if (engineOkLabel) engineOkLabel.textContent = 'OK';
+        if (sessionDot) sessionDot.className = 'dot red';
+        if (clusterStateText) {
+          clusterStateText.className = 'cluster-status-val disconnected';
+          clusterStateText.textContent = (res && res.networkOk === false)
+            ? '🔴 Disconnected (No Network)'
+            : '🔴 Not Connected (Login Required)';
+        }
+        if (showNotice) showToast(`🔴 ${res?.message || 'Not connected — Login a Chrome profile first'}`);
+      }
+      return res;
+    } catch (err) {
+      if (btnEngineVerifyOk) btnEngineVerifyOk.classList.add('signal-red');
+      if (sessionDot) sessionDot.className = 'dot amber';
+      if (clusterStateText) {
+        clusterStateText.className = 'cluster-status-val reconnecting';
+        clusterStateText.textContent = '🟡 Reconnecting...';
+      }
+      if (showNotice) showToast('🔴 Backend unreachable — reconnecting...');
+      return null;
+    }
+  }
+
   function connectWebSocket() {
     const proto = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';
     const wsUrl = `${proto}//${window.location.host}/ws`;
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      if (sessionDot) sessionDot.className = 'dot';
-      if (clusterStateText) clusterStateText.textContent = '🟢 Desktop Cluster Online';
-      refreshProfiles();
+      if (clusterStateText) {
+        clusterStateText.className = 'cluster-status-val reconnecting';
+        clusterStateText.textContent = '🟡 Reconnecting...';
+      }
+      refreshProfiles().then(() => verifyPrimaryEngine(false));
     };
 
     ws.onmessage = (ev) => {
@@ -160,7 +208,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     ws.onclose = () => {
       if (sessionDot) sessionDot.className = 'dot amber';
-      if (clusterStateText) clusterStateText.textContent = '🟡 Reconnecting...';
+      if (btnEngineVerifyOk) btnEngineVerifyOk.classList.remove('signal-green', 'signal-red');
+      if (clusterStateText) {
+        clusterStateText.className = 'cluster-status-val reconnecting';
+        clusterStateText.textContent = '🟡 Reconnecting...';
+      }
       setTimeout(connectWebSocket, 1500);
     };
   }
@@ -346,6 +398,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (flowSubmodesWrap) flowSubmodesWrap.style.display = 'flex';
       if (sessionStatusText) sessionStatusText.textContent = 'Google Flow (Desktop Cluster)';
       updateGenerateButtonText();
+      verifyPrimaryEngine(false);
       showToast('Switched to Google Flow Cluster Pipeline');
     } else {
       if (btnEngineFlow) btnEngineFlow.classList.remove('active');
@@ -354,12 +407,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (flowSubmodesWrap) flowSubmodesWrap.style.display = 'none';
       if (sessionStatusText) sessionStatusText.textContent = 'Gemini Canvas (Desktop Cluster)';
       updateGenerateButtonText();
+      verifyPrimaryEngine(false);
       showToast('Switched to Gemini Canvas Cluster Pipeline');
     }
   }
 
   if (btnEngineCanvas) btnEngineCanvas.addEventListener('click', () => setEngine('gemini-canvas'));
   if (btnEngineFlow) btnEngineFlow.addEventListener('click', () => setEngine('google-flow'));
+  if (btnEngineVerifyOk) btnEngineVerifyOk.addEventListener('click', () => verifyPrimaryEngine(true));
 
   if (flowSubmodeBtnRow) {
     flowSubmodeBtnRow.addEventListener('click', (e) => {
@@ -735,6 +790,8 @@ document.addEventListener('DOMContentLoaded', () => {
       items: state.items,
       engine: state.engine,
       subMode: state.subMode,
+      charDesc: charPrompt || null,
+      styleDesc: stylePrompt || null,
       charImageBase64: (charToggle && charToggle.checked && state.charImageBase64) ? state.charImageBase64 : null,
       styleImageBase64: (styleToggle && styleToggle.checked && state.styleImageBase64) ? state.styleImageBase64 : null
     });
@@ -759,7 +816,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleServerEvent(msg) {
     if (!msg) return;
     if (msg.type === 'PROFILES_UPDATED') {
-      refreshProfiles();
+      refreshProfiles().then(() => verifyPrimaryEngine(false));
     } else if (msg.type === 'ITEM_STARTED') {
       const item = state.items.find(i => i.index === msg.index);
       if (item && item.status !== 'done') updateCardStatus(msg.index, 'Generating...');
