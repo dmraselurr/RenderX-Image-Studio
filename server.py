@@ -515,7 +515,7 @@ async def get_or_open_worker_context(pid: str, clear_existing_chrome: bool = Fal
         "ignore_default_args": ["--enable-automation", "--disable-extensions"],
         "args": [
             "--start-minimized",
-            "--window-position=50,30",
+            "--window-position=-32000,-32000",
             "--window-size=1280,900",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
@@ -529,6 +529,15 @@ async def get_or_open_worker_context(pid: str, clear_existing_chrome: bool = Fal
 
     ctx = await state.pw.chromium.launch_persistent_context(**kwargs)
     state.worker_contexts[pid] = ctx
+
+    # Ensure window stays minimized/off-screen via CDP so batch Chrome workers never pop onto active screen
+    try:
+        pg0 = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        cdp = await ctx.new_cdp_session(pg0)
+        win = await cdp.send("Browser.getWindowForTarget")
+        await cdp.send("Browser.setWindowBounds", {"windowId": win["windowId"], "bounds": {"windowState": "minimized"}})
+    except Exception:
+        pass
 
     def on_ctx_close(_):
         state.worker_contexts.pop(pid, None)
@@ -722,9 +731,10 @@ async def run_canvas_profile_worker(
                     except Exception:
                         pass
 
-                # Optional Character Consistency image reference
+                # Optional Character Consistency (ref image / description)
                 char_ref_b64 = options.get("charImageBase64") or ""
-                if char_ref_b64 and "," in char_ref_b64:
+                char_desc = options.get("charDesc") or ""
+                if (char_ref_b64 and "," in char_ref_b64) or char_desc:
                     try:
                         cc_toggle = frame.locator("#ccToggle")
                         if await cc_toggle.count() > 0 and not await cc_toggle.is_checked():
@@ -734,17 +744,48 @@ async def run_canvas_profile_worker(
                                 el.dispatchEvent(new Event('change', {bubbles: true}));
                             }""")
                             await asyncio.sleep(0.6)
-                        fd, tmp_img = tempfile.mkstemp(prefix="rx_char_", suffix=".png")
-                        os.close(fd)
-                        Path(tmp_img).write_bytes(base64.b64decode(char_ref_b64.split(",", 1)[1]))
-                        await frame.locator("input.cc-image-input").first.set_input_files(tmp_img)
-                        await asyncio.sleep(0.8)
-                        try:
-                            os.remove(tmp_img)
-                        except OSError:
-                            pass
+                        if char_desc and await frame.locator("textarea.cc-text-input").count() > 0:
+                            await frame.locator("textarea.cc-text-input").first.fill(char_desc[:600])
+                        if char_ref_b64 and "," in char_ref_b64:
+                            fd, tmp_img = tempfile.mkstemp(prefix="rx_char_", suffix=".png")
+                            os.close(fd)
+                            Path(tmp_img).write_bytes(base64.b64decode(char_ref_b64.split(",", 1)[1]))
+                            await frame.locator("input.cc-image-input").first.set_input_files(tmp_img)
+                            await asyncio.sleep(0.8)
+                            try:
+                                os.remove(tmp_img)
+                            except OSError:
+                                pass
                     except Exception as cc_err:
                         await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Char ref note: {cc_err}"})
+
+                # Optional Style Consistency (ref image / description)
+                style_ref_b64 = options.get("styleImageBase64") or ""
+                style_desc = options.get("styleDesc") or ""
+                if (style_ref_b64 and "," in style_ref_b64) or style_desc:
+                    try:
+                        sc_toggle = frame.locator("#scToggle")
+                        if await sc_toggle.count() > 0 and not await sc_toggle.is_checked():
+                            await sc_toggle.evaluate("""(el) => {
+                                el.checked = true;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                            }""")
+                            await asyncio.sleep(0.6)
+                        if style_desc and await frame.locator("#scText").count() > 0:
+                            await frame.locator("#scText").first.fill(style_desc[:600])
+                        if style_ref_b64 and "," in style_ref_b64 and await frame.locator("#scImage").count() > 0:
+                            fd, tmp_simg = tempfile.mkstemp(prefix="rx_style_", suffix=".png")
+                            os.close(fd)
+                            Path(tmp_simg).write_bytes(base64.b64decode(style_ref_b64.split(",", 1)[1]))
+                            await frame.locator("#scImage").first.set_input_files(tmp_simg)
+                            await asyncio.sleep(0.8)
+                            try:
+                                os.remove(tmp_simg)
+                            except OSError:
+                                pass
+                    except Exception as sc_err:
+                        await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Style ref note: {sc_err}"})
 
                 # Fill prompts cleanly (1 line per prompt) and verify counter matches!
                 clean_prompts = [sanitize_prompt(it["fullPrompt"]) for it in group_items]
@@ -837,10 +878,58 @@ async def run_canvas_profile_worker(
                     if len(done_slots) >= len(group_items):
                         break
 
-                    # If Stop button appeared and then disappeared, Canvas finished rendering
+                    # If Stop button appeared and then disappeared, Canvas finished initial render
                     if started_generating and not stop_vis:
-                        # Give 2s grace for final tile image load
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(1.8)
+                        # Final sweep for tiles that just finished painting
+                        final_ext = await frame.evaluate("""async (alreadyDone) => {
+                            const grid = document.querySelector('#image-grid');
+                            if (!grid) return [];
+                            const cards = Array.from(grid.children);
+                            const out = [];
+                            for (let i = 0; i < cards.length; i++) {
+                                if (alreadyDone.includes(i)) continue;
+                                const img = cards[i].querySelector('img');
+                                if (img && img.src && img.complete && (img.naturalWidth > 64 || img.width > 64)) {
+                                    try {
+                                        const r = await fetch(img.src);
+                                        const b = await r.blob();
+                                        const b64 = await new Promise((res) => {
+                                            const fr = new FileReader();
+                                            fr.onloadend = () => res(fr.result);
+                                            fr.readAsDataURL(b);
+                                        });
+                                        out.push({ slot: i, dataUrl: b64 });
+                                    } catch (e) {}
+                                }
+                            }
+                            return out;
+                        }""", list(done_slots))
+                        for tile in final_ext:
+                            slot = tile["slot"]
+                            if slot < len(group_items) and slot not in done_slots:
+                                done_slots.add(slot)
+                                it = group_items[slot]
+                                await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": tile["dataUrl"]}, item_map, batch_dir, "image")
+
+                        # Auto-retry failed tiles once if Canvas shows Select Failed button (bulkgem.py parity)
+                        try:
+                            sel_fail = frame.locator("#select-failed-btn")
+                            if len(done_slots) < len(group_items) and await sel_fail.count() > 0 and await sel_fail.is_visible():
+                                await sel_fail.click()
+                                await asyncio.sleep(0.7)
+                                regen = frame.locator("#bulk-regen-btn")
+                                if await regen.count() > 0 and await regen.is_visible():
+                                    await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Retrying failed Canvas tiles automatically..."})
+                                    await regen.click()
+                                    await asyncio.sleep(0.8)
+                                    confirm = frame.locator("#confirm-regen-btn")
+                                    if await confirm.count() > 0 and await confirm.is_visible():
+                                        await confirm.click()
+                                    started_generating = False
+                                    continue
+                        except Exception:
+                            pass
                         break
 
                 # Mark any unrendered tiles after Canvas finishes
@@ -997,9 +1086,31 @@ async def _flow_dismiss_banners(page: Page):
             pass
 
 
+async def _flow_configure(page: Page, aspect_ratio: str = "1:1"):
+    ar_icon = "crop_9_16" if aspect_ratio == "9:16" else ("crop_16_9" if aspect_ratio == "16:9" else "crop_square")
+    try:
+        combo = page.locator('button:has-text("crop_16_9"), button:has-text("crop_9_16"), button:has-text("crop_square"), button[aria-label*="crop"]').first
+        if await combo.count() > 0 and await combo.is_visible():
+            await combo.click(timeout=4000)
+            await asyncio.sleep(0.5)
+            for label in (ar_icon, aspect_ratio, "x1", "1"):
+                opt = page.get_by_text(label, exact=True).first
+                if await opt.count() > 0 and await opt.is_visible():
+                    try:
+                        await opt.click(timeout=2500)
+                        await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+    except Exception:
+        pass
+
+
 async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 90) -> str:
     clean_p = sanitize_prompt(item["fullPrompt"])
     is_video = "video" in sub_mode
+    await _flow_configure(page, item.get("aspectRatio", "1:1"))
 
     # Select Image vs Video mode if available
     try:
@@ -1500,8 +1611,58 @@ class BatchStartReq(BaseModel):
     items: List[Dict[str, Any]]
     engine: str = "gemini-canvas"
     subMode: str = "image"
+    charDesc: Optional[str] = None
+    styleDesc: Optional[str] = None
     charImageBase64: Optional[str] = None
     styleImageBase64: Optional[str] = None
+
+
+class EngineCheckReq(BaseModel):
+    engine: str = "gemini-canvas"
+
+
+@app.post("/api/engine/check")
+async def api_engine_check(req: EngineCheckReq):
+    import socket
+    profiles = load_profiles(refresh_disk=True)
+    logged_in_profs = [p for p in profiles if p.get("logged_in")]
+    enabled_logged = [p for p in logged_in_profs if p.get("enabled")]
+
+    host = "labs.google" if req.engine == "google-flow" else "gemini.google.com"
+    engine_label = "Google Flow" if req.engine == "google-flow" else "Gemini Canvas"
+
+    def check_net() -> bool:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(3.0)
+            s.connect((host, 443))
+            s.close()
+            return True
+        except Exception:
+            return False
+
+    net_ok = await asyncio.to_thread(check_net)
+    connected = bool(net_ok and len(logged_in_profs) > 0)
+
+    if not net_ok:
+        msg = f"{engine_label}: Cannot reach {host} (Check internet connection)"
+    elif len(logged_in_profs) == 0:
+        msg = f"{engine_label}: No signed-in Chrome profile found — click Manage Profiles & Login"
+    elif len(enabled_logged) == 0:
+        msg = f"{engine_label}: {len(logged_in_profs)} logged-in profile(s) available (enable P1..P8 pill)"
+        connected = True
+    else:
+        msg = f"{engine_label} Connected ({len(enabled_logged)} active Chrome profile ready)"
+
+    return {
+        "success": True,
+        "connected": connected,
+        "engine": req.engine,
+        "networkOk": net_ok,
+        "loggedInCount": len(logged_in_profs),
+        "enabledLoggedCount": len(enabled_logged),
+        "message": msg,
+    }
 
 
 @app.post("/api/batch/start")
@@ -1512,9 +1673,13 @@ async def api_batch_start(req: BatchStartReq):
     profiles = load_profiles(refresh_disk=True)
     active_profiles = [p for p in profiles if p.get("enabled") and p.get("logged_in")]
     if not active_profiles:
-        active_profiles = [p for p in profiles if p.get("enabled")]
+        active_profiles = [p for p in profiles if p.get("logged_in")]
     if not active_profiles:
-        active_profiles = [profiles[0]]
+        active_profiles = [p for p in profiles if p.get("enabled")] or [profiles[0]]
+
+    # Single prompt uses only the primary selected profile; batch dispatches across 2..N active profiles concurrently
+    if len(req.items) <= 1:
+        active_profiles = [active_profiles[0]]
 
     state.is_running = True
     state.should_stop = False
@@ -1534,6 +1699,8 @@ async def api_batch_start(req: BatchStartReq):
         buckets[chosen["id"]].append(item)
 
     options = {
+        "charDesc": req.charDesc,
+        "styleDesc": req.styleDesc,
         "charImageBase64": req.charImageBase64,
         "styleImageBase64": req.styleImageBase64,
     }
