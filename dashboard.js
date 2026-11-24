@@ -161,7 +161,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (isExtensionContext) {
     startKeepAlive();
+    // Never stay in a standalone 100% full-width dashboard tab — auto-convert into 70vw dock beside Google session
+    const isDockedIframe = (window.self !== window.top) || window.location.search.includes('docked=1');
+    if (!isDockedIframe) {
+      chrome.runtime.sendMessage({ type: 'SWITCH_TO_DOCKED_MODE', engine: state.engine }).catch(() => {});
+    }
   }
+
+  // Smooth mouse-wheel scrolling anywhere inside 70vw dock (even over headers/toolbars)
+  document.addEventListener('wheel', (e) => {
+    const sidebarScroll = $('sidebarScroll');
+    const galleryContainer = $('galleryContainer');
+    const inTextarea = e.target && (e.target.tagName === 'TEXTAREA' || e.target.closest('#sidebarScroll') || e.target.closest('#galleryContainer'));
+    if (inTextarea) return;
+    const target = (e.clientX < 365) ? sidebarScroll : galleryContainer;
+    if (target) {
+      target.scrollBy({ top: e.deltaY, behavior: 'smooth' });
+    }
+  }, { passive: true });
 
   function stopKeepAlive() {
     if (heartbeatTimer) {
@@ -175,7 +192,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ================= 2. Dual Engine Switching =================
-  function setEngine(engine) {
+  function setEngine(engine, notifyHost = true) {
     state.engine = engine;
 
     if (engine === 'google-flow') {
@@ -186,7 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (sessionStatusText) sessionStatusText.textContent = 'Google Flow Active Session';
       if (clusterProfileName) clusterProfileName.textContent = 'Google Flow Account Session';
       updateGenerateButtonText();
-      showToast('Switched to Google Flow Pipeline (Video & Images)');
+      if (notifyHost) showToast('Switched to Google Flow Pipeline (Video & Images)');
     } else {
       if (btnEngineFlow) btnEngineFlow.classList.remove('active');
       if (btnEngineCanvas) btnEngineCanvas.classList.add('active');
@@ -195,12 +212,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (sessionStatusText) sessionStatusText.textContent = 'Gemini Canvas (Free Google Session)';
       if (clusterProfileName) clusterProfileName.textContent = 'Google Active Session (Zero API Key)';
       updateGenerateButtonText();
-      showToast('Switched to Gemini Canvas Pipeline');
+      if (notifyHost) showToast('Switched to Gemini Canvas Pipeline');
+    }
+
+    if (notifyHost && isExtensionContext && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({ type: 'SWITCH_ENGINE_HOST', engine }).catch(() => {});
     }
   }
 
-  if (btnEngineCanvas) btnEngineCanvas.addEventListener('click', () => setEngine('gemini-canvas'));
-  if (btnEngineFlow) btnEngineFlow.addEventListener('click', () => setEngine('google-flow'));
+  if (btnEngineCanvas) btnEngineCanvas.addEventListener('click', () => setEngine('gemini-canvas', true));
+  if (btnEngineFlow) btnEngineFlow.addEventListener('click', () => setEngine('google-flow', true));
 
   // Flow Sub-Modes
   if (flowSubmodeBtnRow) {
@@ -266,6 +287,9 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     chrome.runtime.sendMessage({ type: 'CHECK_STATUS' }, (res) => {
       if (res && res.success) {
+        if (res.activeEngine && res.activeEngine !== state.engine) {
+          setEngine(res.activeEngine, false);
+        }
         applySyncStatusUI(res.geminiConnected, res.flowConnected);
       }
     });
