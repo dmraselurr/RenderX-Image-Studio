@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const engineActiveBadge = $('engineActiveBadge');
   const projectNameInput = $('projectNameInput');
   const createProjectToggle = $('createProjectToggle');
+  const flowAgentToggle = $('flowAgentToggle');
   const clusterStateText = $('clusterStateText');
   const clusterProfileName = $('clusterProfileName');
   const btnManageProfiles = $('btnManageProfiles');
@@ -839,6 +840,7 @@ document.addEventListener('DOMContentLoaded', () => {
       subMode: state.subMode,
       projectName: (projectNameInput && projectNameInput.value.trim()) ? projectNameInput.value.trim() : 'RenderX_Project_01',
       createNewProject: createProjectToggle ? Boolean(createProjectToggle.checked) : true,
+      useFlowAgent: flowAgentToggle ? Boolean(flowAgentToggle.checked) : true,
       negPrompt: negPrompt || null,
       charDesc: charPrompt || null,
       styleDesc: stylePrompt || null,
