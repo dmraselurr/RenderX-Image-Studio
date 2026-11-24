@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -24,7 +24,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from playwright.async_api import async_playwright, BrowserContext, Page, Frame
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext, Page, Frame
+else:
+    BrowserContext = Any
+    Page = Any
+    Frame = Any
 
 BASE_DIR = Path(__file__).resolve().parent
 PROFILES_DIR = BASE_DIR / "profiles"
@@ -527,6 +533,7 @@ async def get_or_open_worker_context(pid: str, clear_existing_chrome: bool = Fal
     if CHROME_EXE:
         kwargs["executable_path"] = CHROME_EXE
 
+    await ensure_playwright()
     ctx = await state.pw.chromium.launch_persistent_context(**kwargs)
     state.worker_contexts[pid] = ctx
 
@@ -1692,9 +1699,15 @@ async def _watch_real_chrome_login(pid: str):
 
 
 # ================= FastAPI Lifecycle & Endpoints =================
+async def ensure_playwright():
+    if state.pw is None:
+        from playwright.async_api import async_playwright
+        state.pw = await async_playwright().start()
+
+
 @app.on_event("startup")
 async def on_startup():
-    state.pw = await async_playwright().start()
+    # Fast instant startup (<0.3s): Playwright initializes lazily on first generation!
     load_profiles(refresh_disk=True)
 
 
@@ -1712,6 +1725,14 @@ async def on_shutdown():
 @app.get("/")
 async def serve_root():
     return FileResponse(BASE_DIR / "dashboard.html")
+
+
+@app.get("/favicon.ico")
+async def serve_favicon():
+    ico = BASE_DIR / "icons" / "ris_logo.ico"
+    if ico.is_file():
+        return FileResponse(ico, media_type="image/x-icon")
+    return FileResponse(BASE_DIR / "icons" / "icon128.png")
 
 
 @app.get("/api/status")
