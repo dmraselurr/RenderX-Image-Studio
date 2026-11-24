@@ -1,56 +1,51 @@
 /**
  * RenderX Image Studio - Google Flow Isolated Content Relay
- * 1. Passively bridges MAIN world Bearer/projectId/reCAPTCHA capture to background.js.
- * 2. Provides left-pane 1-shot sync/fallback execution on the existing open Flow tab (Zero new tabs!).
+ * 1. Bridges background.js <-> MAIN world flow_page_bridge.js.
+ * 2. Executes initial Shot #1 in left-pane Flow UI when no captured payload template exists yet.
  */
 
 (function () {
   if (window.__renderexFlowLoaded) return;
   window.__renderexFlowLoaded = true;
 
-  const pendingRequests = new Map();
-
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (!data || data.source !== 'RENDERX_FLOW_BRIDGE') return;
 
-    if (data.type === 'CAPTURED_FLOW_CALL') {
+    if (data.type === 'CAPTURED_FLOW_RAW') {
       chrome.runtime.sendMessage({
-        type: 'CAPTURED_FLOW_CALL',
+        type: 'CAPTURED_FLOW_RAW',
         url: data.url,
-        authorization: data.authorization,
-        apiKey: data.apiKey,
-        projectId: data.projectId,
-        bodyJson: data.bodyJson,
-        siteKey: data.siteKey
+        headers: data.headers,
+        body: data.body,
+        promptHint: data.promptHint,
+        siteKey: data.siteKey,
+        isMediaGen: data.isMediaGen
       }).catch(() => {});
     }
 
-    if (data.type === 'FLOW_CONTEXT_RESULT' && data.requestId) {
-      const resolver = pendingRequests.get(data.requestId);
-      if (resolver) {
-        pendingRequests.delete(data.requestId);
-        resolver(data);
-      }
+    if (data.type === 'MAIN_BATCH_SHOT_RESULT') {
+      chrome.runtime.sendMessage({
+        type: 'MAIN_BATCH_SHOT_RESULT',
+        engine: 'google-flow',
+        batchId: data.batchId,
+        index: data.index,
+        ok: data.ok,
+        httpStatus: data.httpStatus,
+        dataUrl: data.dataUrl,
+        imageUrl: data.imageUrl,
+        error: data.error
+      }).catch(() => {});
+    }
+
+    if (data.type === 'MAIN_BATCH_DONE') {
+      chrome.runtime.sendMessage({
+        type: 'MAIN_BATCH_DONE',
+        engine: 'google-flow',
+        batchId: data.batchId
+      }).catch(() => {});
     }
   });
-
-  function queryFlowBridge(payload, timeoutMs = 4500) {
-    return new Promise((resolve) => {
-      const requestId = `flow_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const timer = setTimeout(() => {
-        pendingRequests.delete(requestId);
-        resolve({ ok: false, error: 'Flow bridge timeout' });
-      }, timeoutMs);
-
-      pendingRequests.set(requestId, (res) => {
-        clearTimeout(timer);
-        resolve(res);
-      });
-
-      window.postMessage({ ...payload, source: 'RENDERX_FLOW_CS', requestId }, '*');
-    });
-  }
 
   function isVisible(el) {
     return el && (el.offsetParent !== null || el.getClientRects().length > 0);
@@ -73,7 +68,6 @@
   }
 
   async function executeFlowLeftPaneTurn(promptText, subMode = 'image') {
-    // 1. If on landing page, click "New project"
     const clickables = Array.from(document.querySelectorAll('button, [role="button"], a')).filter(isVisible);
     const newProjBtn = clickables.find(b => {
       const t = (b.innerText || b.textContent || '').trim().toLowerCase();
@@ -84,7 +78,6 @@
       await new Promise(r => setTimeout(r, 2500));
     }
 
-    // 2. Switch bottom toolbar pill if needed ("Video" -> "Image")
     if (subMode === 'image') {
       const pills = Array.from(document.querySelectorAll('button, [role="button"], [role="combobox"]')).filter(isVisible);
       const videoPill = pills.find(el => {
@@ -107,7 +100,6 @@
       }
     }
 
-    // 3. Find prompt textarea & set React native value
     const inputBox = ['textarea[placeholder*="describe" i]', 'textarea[placeholder*="prompt" i]', 'textarea', 'div[contenteditable="true"][role="textbox"]']
       .map(s => document.querySelector(s))
       .find(isVisible);
@@ -126,7 +118,6 @@
     inputBox.dispatchEvent(new Event('input', { bubbles: true }));
     inputBox.dispatchEvent(new Event('change', { bubbles: true }));
 
-    // Snapshot pre-existing media
     const preSrcs = new Set();
     document.querySelectorAll('img, video').forEach(el => {
       if (el.src) preSrcs.add(el.src);
@@ -135,7 +126,6 @@
 
     await new Promise(r => setTimeout(r, 150));
 
-    // Find circular white arrow submit button (→) near composer bottom-right
     const candidates = Array.from(document.querySelectorAll('button, div[role="button"]')).filter(isVisible);
     let submitBtn = candidates.find(b => {
       const t = (b.innerText || b.textContent || '').trim().toLowerCase();
@@ -159,7 +149,6 @@
     }
     inputBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
 
-    // Wait for newly rendered output in left pane (while webRequest simultaneously captures Bearer + projectId!)
     const isVideo = subMode.includes('video');
     const timeoutMs = isVideo ? 90000 : 35000;
 
@@ -169,7 +158,7 @@
         if (settled) return;
         settled = true;
         clearInterval(poller);
-        reject(new Error('Flow generation timed out in left pane. Ensure you are logged in to Google Flow.'));
+        reject(new Error('Flow left-pane sync timed out (ensure signed in to Google Flow).'));
       }, timeoutMs);
 
       async function checkOutput() {
@@ -207,9 +196,15 @@
       return true;
     }
 
-    if (request.type === 'GET_FLOW_CONTEXT') {
-      queryFlowBridge({ type: 'GET_FLOW_CONTEXT', siteKey: request.siteKey || '' }, 4500)
-        .then(sendResponse);
+    if (request.type === 'EXECUTE_FLOW_MAIN_BATCH') {
+      window.postMessage({
+        source: 'RENDERX_FLOW_CS',
+        type: 'EXECUTE_FLOW_MAIN_BATCH',
+        items: request.items,
+        template: request.template,
+        batchId: request.batchId
+      }, '*');
+      sendResponse({ ok: true, dispatched: true });
       return true;
     }
 
