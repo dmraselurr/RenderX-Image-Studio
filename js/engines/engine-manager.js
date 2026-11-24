@@ -1,40 +1,39 @@
 /**
- * RenderX Image Studio - Engine Manager
- * Orchestrates multi-engine generation with automatic fallback protection.
- * Ensures image generation NEVER stops on error or rate-limits.
+ * RenderX Image Studio - Resilient Engine Manager
+ * Strict Priority Order:
+ *  1. Gemini Canvas (5 Retries, 15-20s duration)
+ *  2. Google AI Studio (Imagen 3)
+ *  3. Free Options (FLUX.1 / Serverless)
  */
 
 class EngineManager {
-  /**
-   * Build complete enhanced prompt injecting Character and Style locks if enabled.
-   */
   static composePrompt(basePrompt, options = {}) {
     let finalPrompt = basePrompt.trim();
 
     // 1. Inject Character details if locked
     if (options.charLock && options.charDesc && options.charDesc.trim()) {
-      finalPrompt += `, Character appearance: ${options.charDesc.trim()}`;
+      finalPrompt += `, Character: ${options.charDesc.trim()}`;
     }
 
     // 2. Inject Style details if locked
     if (options.styleLock && options.styleDesc && options.styleDesc.trim()) {
-      finalPrompt += `, Visual style: ${options.styleDesc.trim()}`;
+      finalPrompt += `, Style: ${options.styleDesc.trim()}`;
     }
 
     return finalPrompt;
   }
 
   /**
-   * Execute image generation with automatic fallback resilience.
+   * Execute with 5-retry loop and hierarchical fallback priority
    * @param {string} prompt 
-   * @param {Object} options - { engine, autoFallback, aspectRatio, negativePrompt, charLock, charDesc, styleLock, styleDesc, apiKey, onEngineFallback }
+   * @param {Object} options 
    * @returns {Promise<{blob: Blob, engineUsed: string}>}
    */
   static async execute(prompt, options = {}) {
     const {
       engine = 'gemini-canvas',
       autoFallback = true,
-      aspectRatio = 'square',
+      aspectRatio = 'landscape',
       negativePrompt = '',
       charLock = false,
       charDesc = '',
@@ -43,12 +42,13 @@ class EngineManager {
       styleDesc = '',
       styleImage = null,
       apiKey = '',
+      onStatusUpdate = null,
       onEngineFallback = null
     } = options;
 
     const enrichedPrompt = EngineManager.composePrompt(prompt, { charLock, charDesc, styleLock, styleDesc });
 
-    const engineParams = {
+    const params = {
       aspectRatio,
       negativePrompt,
       charImage,
@@ -56,39 +56,77 @@ class EngineManager {
       apiKey
     };
 
-    // Primary Engine Execution
-    try {
-      if (engine === 'gemini-canvas') {
-        const blob = await CanvasEngine.generate(enrichedPrompt, engineParams);
-        return { blob, engineUsed: 'Gemini Canvas' };
-      } else if (engine === 'google-aistudio') {
-        const blob = await AIStudioEngine.generate(enrichedPrompt, engineParams);
-        return { blob, engineUsed: 'Google AI Studio (Imagen 3)' };
-      } else {
-        const blob = await PollinationsEngine.generate(enrichedPrompt, engineParams);
-        return { blob, engineUsed: 'Pollinations FLUX.1' };
-      }
-    } catch (primaryError) {
-      console.warn(`Primary engine (${engine}) encountered an issue:`, primaryError.message);
-
-      // If Auto-Fallback is disabled, rethrow the error
-      if (!autoFallback) {
-        throw primaryError;
-      }
-
-      // Notify caller of fallback transition
-      if (typeof onEngineFallback === 'function') {
-        onEngineFallback('Pollinations FLUX.1', primaryError.message);
-      }
-
-      // Fallback Strategy: Pollinations FLUX.1 (Always free, open, and resilient)
+    // -----------------------------------------------------------------
+    // PRIORITY 1: GEMINI CANVAS (Primary Option with 5 Retries)
+    // -----------------------------------------------------------------
+    if (engine === 'gemini-canvas') {
       try {
-        const fallbackBlob = await PollinationsEngine.generate(enrichedPrompt, engineParams);
-        return { blob: fallbackBlob, engineUsed: 'Pollinations FLUX.1 (Fallback)' };
-      } catch (fallbackError) {
-        throw new Error(`All engines failed: ${primaryError.message} -> ${fallbackError.message}`);
+        const blob = await CanvasEngine.generate(enrichedPrompt, params, (attempt, max) => {
+          if (typeof onStatusUpdate === 'function') {
+            onStatusUpdate(`Gemini Canvas (Attempt ${attempt}/${max})...`);
+          }
+        });
+        return { blob, engineUsed: 'Gemini Canvas (Primary)' };
+      } catch (canvasError) {
+        console.warn('[EngineManager] Gemini Canvas exhausted 5 retries:', canvasError.message);
+
+        if (!autoFallback) {
+          throw canvasError;
+        }
+
+        // -----------------------------------------------------------------
+        // PRIORITY 2: GOOGLE AI STUDIO (Imagen 3 API)
+        // -----------------------------------------------------------------
+        if (apiKey && apiKey.trim()) {
+          try {
+            if (typeof onEngineFallback === 'function') {
+              onEngineFallback('Google AI Studio (Imagen 3)', 'Canvas retry limit reached');
+            }
+            const blob = await AIStudioEngine.generate(enrichedPrompt, params);
+            return { blob, engineUsed: 'Google AI Studio (Fallback 2)' };
+          } catch (aiStudioError) {
+            console.warn('[EngineManager] Google AI Studio failed:', aiStudioError.message);
+          }
+        }
+
+        // -----------------------------------------------------------------
+        // PRIORITY 3: FREE OPTIONS (FLUX.1 / Multi-Endpoint)
+        // -----------------------------------------------------------------
+        if (typeof onEngineFallback === 'function') {
+          onEngineFallback('Free Options (FLUX.1)', 'Switching to free tier');
+        }
+
+        try {
+          const blob = await PollinationsEngine.generate(enrichedPrompt, params);
+          return { blob, engineUsed: 'Free Options (Fallback 3)' };
+        } catch (freeError) {
+          throw new Error(`All priority engines exhausted: Canvas (${canvasError.message}) -> Free (${freeError.message})`);
+        }
       }
     }
+
+    // -----------------------------------------------------------------
+    // DIRECT GOOGLE AI STUDIO EXPLICIT SELECTION
+    // -----------------------------------------------------------------
+    if (engine === 'google-aistudio') {
+      try {
+        const blob = await AIStudioEngine.generate(enrichedPrompt, params);
+        return { blob, engineUsed: 'Google AI Studio' };
+      } catch (err) {
+        if (!autoFallback) throw err;
+        if (typeof onEngineFallback === 'function') {
+          onEngineFallback('Free Options (FLUX.1)', err.message);
+        }
+        const blob = await PollinationsEngine.generate(enrichedPrompt, params);
+        return { blob, engineUsed: 'Free Options (Fallback)' };
+      }
+    }
+
+    // -----------------------------------------------------------------
+    // DIRECT FREE OPTIONS EXPLICIT SELECTION
+    // -----------------------------------------------------------------
+    const blob = await PollinationsEngine.generate(enrichedPrompt, params);
+    return { blob, engineUsed: 'Free Options (FLUX.1)' };
   }
 }
 
