@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RenderX Image Studio - AI Video Timeline &amp; Consistency Generator</title>
+  <link rel="stylesheet" href="dashboard.css?v=1.0.8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="logo-group">
+      <!-- Rx Glowing Logo matching Reference -->
+      <div class="rx-logo-wrapper" title="RenderX Image Studio PRO">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="30" height="30">
+          <rect width="36" height="36" rx="8" fill="#080A10" stroke="#FF1E56" stroke-width="2.5"/>
+          <text x="4" y="25" fill="#FFFFFF" font-size="22" font-weight="900" font-family="'Arial Black', 'Inter', sans-serif">R</text>
+          <text x="20" y="29" fill="#FF1E56" font-size="16" font-weight="900" font-family="'Arial Black', 'Inter', sans-serif">x</text>
+        </svg>
+      </div>
+
+      <div class="logo-text">
+        <h1>RenderX Image Studio <span class="badge-version">v1.0.8 PRO</span></h1>
+        <p>AI Video Timeline &amp; Consistency Generator</p>
+      </div>
+    </div>
+
+    <!-- Center/Right Status & Window Dock Controls -->
+    <div class="topbar-actions">
+      <div class="engine-pill" id="sessionStatusPill">
+        <span class="dot" id="sessionDot"></span>
+        <span id="sessionStatusText">Gemini Canvas (Free Google Session)</span>
+      </div>
+
+      <button type="button" class="btn-dock-split" id="btnArrangeSplit" title="Dock Split: Left 28% Google Tab | Right 72% Extension Studio">
+        <span>🪟 Dock 75% Split</span>
+      </button>
+
+      <button type="button" class="btn-icon" id="sessionInfoBtn" title="Google Session &amp; Cluster Info">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+        </svg>
+      </button>
+
+      <button type="button" class="btn-icon danger" id="globalResetBtn" title="Reset Prompts &amp; Gallery">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Workspace: Left Sidebar + Right Studio Shots Gallery -->
+  <div class="workspace">
+
+    <!-- ================= Left Sidebar (Smooth Vertical Scroll with 5 Distinct Boxes) ================= -->
+    <aside class="sidebar" id="sidebarContainer">
+      <div class="sidebar-scroll" id="sidebarScroll">
+
+        <!-- BOX 1: ENGINE & ASPECT RATIO -->
+        <div class="rx-box" id="boxEngineAspect">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>⚙️</span><span>ENGINE &amp; ASPECT RATIO</span>
+            </span>
+            <span class="rx-box-badge" id="engineActiveBadge">CANVAS</span>
+          </div>
+          <div class="rx-box-body">
+            <!-- Engine Selection Switcher -->
+            <label class="input-label">Primary AI Engine</label>
+            <div class="engine-switch-row" id="engineSwitchRow">
+              <button type="button" class="btn-engine-opt active" data-engine="gemini-canvas" id="btnEngineCanvas">
+                <span class="engine-opt-icon">💎</span>
+                <span>Gemini Canvas</span>
+              </button>
+              <button type="button" class="btn-engine-opt" data-engine="google-flow" id="btnEngineFlow">
+                <span class="engine-opt-icon">🌊</span>
+                <span>Google Flow</span>
+              </button>
+            </div>
+
+            <!-- Active Google Session Status Bar -->
+            <div class="canvas-cluster-bar" id="clusterStatusBar">
+              <div class="cluster-status-line">
+                <span class="cluster-status-label">ACTIVE GOOGLE CLUSTER:</span>
+                <span class="cluster-status-val connected" id="clusterStateText">🟢 Connected</span>
+              </div>
+              <div class="cluster-profile-pill" id="clusterProfilePill">
+                <span class="cluster-dot"></span>
+                <span id="clusterProfileName">Google Active Session (Zero API Key)</span>
+              </div>
+            </div>
+
+            <!-- Google Flow Sub-Modes (Visible when Google Flow is selected) -->
+            <div class="flow-submodes-wrap" id="flowSubmodesWrap" style="display: none;">
+              <label class="input-label">Flow Pipeline Mode</label>
+              <div class="flow-submode-btn-row" id="flowSubmodeBtnRow">
+                <button type="button" class="btn-submode-opt active" data-submode="image">
+                  <span>🖼️ Create Image</span>
+                </button>
+                <button type="button" class="btn-submode-opt" data-submode="text-to-video">
+                  <span>🎬 Text-to-Video</span>
+                </button>
+                <button type="button" class="btn-submode-opt" data-submode="image-to-video">
+                  <span>🎞️ Image-to-Video</span>
+                </button>
+              </div>
+
+              <!-- Initial Reference Frame Upload Slot for Image-to-Video -->
+              <div class="flow-init-frame-slot" id="flowInitFrameSlot" style="display: none;">
+                <label class="upload-btn-label" for="flowInitFrameInput">📁 Upload Init Frame (.png / .jpg)</label>
+                <input type="file" id="flowInitFrameInput" accept="image/*" style="display: none;">
+                <div class="upload-thumbnail-preview" id="flowInitFramePreview" style="display: none;">
+                  <img id="flowInitFrameImg" src="" alt="Init Frame">
+                  <button type="button" class="btn-preview-remove" id="flowInitFrameRemoveBtn" title="Remove Frame">✕</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Aspect Ratio Selector (16:9 Long | 9:16 Short | 1:1 Square) -->
+            <label class="input-label" style="margin-top: 4px;">Aspect Ratio</label>
+            <div class="aspect-btn-group" id="aspectBtnGroup">
+              <button type="button" class="btn-aspect" data-aspect="16:9" data-label="16:9 Long">
+                <span>📺 16:9 Long</span>
+              </button>
+              <button type="button" class="btn-aspect" data-aspect="9:16" data-label="9:16 Short">
+                <span>📱 9:16 Short</span>
+              </button>
+              <button type="button" class="btn-aspect active" data-aspect="1:1" data-label="1:1 Square">
+                <span>⏹️ 1:1 Square</span>
+              </button>
+            </div>
+            <p class="rx-helper-text">Configures native render canvas &amp; Flow video aspect ratios.</p>
+          </div>
+        </div>
+
+        <!-- BOX 2: CHARACTER CONSISTENCY -->
+        <div class="rx-box" id="boxCharConsistency">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>👤</span><span>CHARACTER CONSISTENCY</span>
+            </span>
+            <label class="box-active-toggle" title="Enable Character Consistency Injection">
+              <input type="checkbox" id="charToggle" checked>
+              <span>ACTIVE</span>
+            </label>
+          </div>
+          <div class="rx-box-body">
+            <textarea id="charPromptText" class="textarea-control" rows="3" placeholder="Describe character appearance (e.g. young man with round glasses, blue jacket, athletic build)..."></textarea>
+            <div class="upload-row">
+              <label class="upload-btn-label" for="charInputFile">📁 Ref Img</label>
+              <input type="file" id="charInputFile" accept="image/*" style="display:none;">
+              <div class="upload-thumbnail-preview" id="charPreviewBox" style="display:none;">
+                <img id="charPreviewImg" src="" alt="Character Reference">
+                <button type="button" class="btn-preview-remove" id="charRemoveBtn" title="Remove Reference">✕</button>
+              </div>
+              <span class="rx-helper-text" style="margin-left: auto;">Auto-locked across shots</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- BOX 3: STYLE CONSISTENCY -->
+        <div class="rx-box" id="boxStyleConsistency">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>🎨</span><span>STYLE CONSISTENCY</span>
+            </span>
+            <label class="box-active-toggle style-toggle" title="Enable Style Consistency Injection">
+              <input type="checkbox" id="styleToggle" checked>
+              <span>ACTIVE</span>
+            </label>
+          </div>
+          <div class="rx-box-body">
+            <textarea id="stylePromptText" class="textarea-control" rows="3" placeholder="Style directives (e.g. 3D Pixar render, vibrant cinematic lighting, raytraced reflections, 8k octane render)..."></textarea>
+            <div class="upload-row">
+              <label class="upload-btn-label style-btn" for="styleInputFile">📁 Style Ref</label>
+              <input type="file" id="styleInputFile" accept="image/*" style="display:none;">
+              <div class="upload-thumbnail-preview" id="stylePreviewBox" style="display:none;">
+                <img id="stylePreviewImg" src="" alt="Style Reference">
+                <button type="button" class="btn-preview-remove" id="styleRemoveBtn" title="Remove Style">✕</button>
+              </div>
+              <span class="rx-helper-text" style="margin-left: auto;">Cohesive visual look</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- BOX 4: NEGATIVE PROMPTS -->
+        <div class="rx-box" id="boxNegativePrompts">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>🚫</span><span>NEGATIVE PROMPTS</span>
+            </span>
+            <span class="rx-box-badge danger" id="negActiveCount">6 ACTIVE</span>
+          </div>
+          <div class="rx-box-body">
+            <!-- Clickable Preset Chips -->
+            <div class="chips-container" id="negativeChipsContainer">
+              <span class="chip-tag active" data-tag="bad anatomy">Bad Anatomy</span>
+              <span class="chip-tag active" data-tag="extra fingers">Extra Fingers</span>
+              <span class="chip-tag active" data-tag="blurry">Blurry</span>
+              <span class="chip-tag active" data-tag="distorted face">Distorted Face</span>
+              <span class="chip-tag active" data-tag="low quality">Low Quality</span>
+              <span class="chip-tag active" data-tag="watermark">Watermark</span>
+            </div>
+            <!-- Custom Negative Prompt Textarea -->
+            <input type="text" id="customNegativeInput" class="input-control" placeholder="Additional negative terms (comma separated)...">
+          </div>
+        </div>
+
+        <!-- BOX 5: TIMELINE PROMPTS & BATCH EXECUTION -->
+        <div class="rx-box" id="boxTimelinePrompts">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>⏱️</span><span>TIMELINE PROMPTS</span>
+            </span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <button type="button" class="btn-subtle" id="autoSyncBtn" title="Auto Sync and Format Lines">⚡ Auto Sync</button>
+              <button type="button" class="btn-subtle" id="loadSampleScriptBtn" title="Load Sample 5-Scene Script">📋 Sample</button>
+              <span class="prompt-counter-badge" id="promptCountBadge">0</span>
+            </div>
+          </div>
+          <div class="rx-box-body">
+            <textarea id="promptsTextarea" class="textarea-control prompts-input" rows="5" placeholder="00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field&#10;02.50-08.59 | Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting&#10;08.59-16.42 | Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric haze&#10;16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography&#10;22.94-30.00 | Scene 5: Golden hour dramatic sunset with volumetric rim light"></textarea>
+
+            <!-- Execution Action Stack -->
+            <div class="sidebar-action-stack">
+              <button type="button" class="btn-primary" id="generateBatchBtn">
+                <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <span id="generateBtnText">⚡ Generate Images</span>
+              </button>
+
+              <button type="button" class="btn-secondary danger" id="stopBatchBtn" disabled>
+                <svg width="13" height="13" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                <span>Stop Generation</span>
+              </button>
+
+              <button type="button" class="btn-secondary" id="downloadZipBtn" disabled>
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+                <span>📥 Download All as ZIP (.zip)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+    <!-- ================= Right Main Canvas (Studio Shots Gallery) ================= -->
+    <main class="main-canvas" id="mainCanvas">
+
+      <!-- Gallery Toolbar -->
+      <header class="canvas-toolbar">
+        <div class="stats-group">
+          <span class="gallery-brand-title">
+            <span>🎞️</span><span>STUDIO SHOTS GALLERY</span>
+          </span>
+          <span class="gallery-ready-pill" id="galleryReadyPill">0 READY (STANDBY GRID)</span>
+          <span class="gallery-timeline-hint" id="galleryTimelineHint">Timeline Ordered: 00.00-08.04.png</span>
+
+          <!-- Active Progress Bar -->
+          <div class="progress-bar-container" id="progressBarWrap">
+            <div class="progress-bar-fill" id="progressBarFill"></div>
+          </div>
+        </div>
+
+        <div class="canvas-actions">
+          <button type="button" class="btn-gallery-action danger" id="clearGalleryBtn" title="Reset Gallery to Standby">
+            <span>🗑️ Reset Shoot Gallery</span>
+          </button>
+          <button type="button" class="btn-gallery-action warning" id="downloadZipTopBtn" disabled title="Download all rendered assets as sequential ZIP">
+            <span>📦 Download All (.zip)</span>
+          </button>
+          <button type="button" class="btn-gallery-action success" id="pushTimelineBtn" title="Push rendered media into video production timeline">
+            <span>🎬 Push All to Video Timeline -&gt;</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- 4-Column Gallery Grid (Always 4 Columns in 1 Row) -->
+      <div class="gallery-container" id="galleryContainer">
+        <div class="gallery-grid" id="thumbnailGrid">
+
+          <!-- Row 1: Exactly 4 Default Standby Dummy Cards -->
+          <div class="image-card dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 00.00 - 04.35</span>
+              <span class="badge-standby">Standby</span>
+            </div>
+            <div class="card-preview aspect-square">
+              <div class="dummy-preview">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Shot #1 Ready</span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <div class="card-fn-row">
+                <span class="card-filename">📁 01_00.00-04.35.png</span>
+                <span class="card-idx">#01</span>
+              </div>
+              <p class="card-prompt-text">Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field...</p>
+              <div class="card-actions-single-row">
+                <button type="button" class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="1">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
+              </div>
+              <div class="card-check-row">
+                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
+                <label class="check-label"><input type="checkbox"> Auto Merge</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="image-card dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 04.35 - 07.83</span>
+              <span class="badge-standby">Standby</span>
+            </div>
+            <div class="card-preview aspect-square">
+              <div class="dummy-preview">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Shot #2 Ready</span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <div class="card-fn-row">
+                <span class="card-filename">📁 02_04.35-07.83.png</span>
+                <span class="card-idx">#02</span>
+              </div>
+              <p class="card-prompt-text">Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting...</p>
+              <div class="card-actions-single-row">
+                <button type="button" class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="2">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
+              </div>
+              <div class="card-check-row">
+                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
+                <label class="check-label"><input type="checkbox"> Auto Merge</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="image-card dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 07.83 - 11.74</span>
+              <span class="badge-standby">Standby</span>
+            </div>
+            <div class="card-preview aspect-square">
+              <div class="dummy-preview">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Shot #3 Ready</span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <div class="card-fn-row">
+                <span class="card-filename">📁 03_07.83-11.74.png</span>
+                <span class="card-idx">#03</span>
+              </div>
+              <p class="card-prompt-text">Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric haze...</p>
+              <div class="card-actions-single-row">
+                <button type="button" class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="3">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
+              </div>
+              <div class="card-check-row">
+                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
+                <label class="check-label"><input type="checkbox"> Auto Merge</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="image-card dummy-card">
+            <div class="card-header-bar">
+              <span class="timestamp-badge">🛡️ 11.74 - 16.52</span>
+              <span class="badge-standby">Standby</span>
+            </div>
+            <div class="card-preview aspect-square">
+              <div class="dummy-preview">
+                <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                <span>Shot #4 Ready</span>
+              </div>
+            </div>
+            <div class="card-meta">
+              <div class="card-fn-row">
+                <span class="card-filename">📁 04_11.74-16.52.png</span>
+                <span class="card-idx">#04</span>
+              </div>
+              <p class="card-prompt-text">Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh...</p>
+              <div class="card-actions-single-row">
+                <button type="button" class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="4">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
+              </div>
+              <div class="card-check-row">
+                <label class="check-label"><input type="checkbox" checked> Final Cut</label>
+                <label class="check-label"><input type="checkbox"> Auto Merge</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Prominent Centered Circular Down Arrow (Row 2 Continuation Indicator) -->
+          <div class="dummy-continuation-row" id="dummyContinuationRow">
+            <div class="dummy-arrow-circle">↓</div>
+            <div class="dummy-continuation-text">Standby: Images will populate dynamically in 4-column rows upon generation</div>
+          </div>
+
+        </div>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- Lightbox Modal (Zoom, Playback & Download) -->
+  <div class="modal-overlay" id="lightboxModal">
+    <div class="modal-card">
+      <div class="modal-card-header">
+        <h3 id="lightboxTitle">Media Preview</h3>
+        <button type="button" class="btn-modal-close" id="closeLightboxBtn">✕</button>
+      </div>
+      <div class="modal-card-viewport" id="lightboxViewport">
+        <img id="lightboxImg" src="" alt="Preview" style="display:none;">
+        <video id="lightboxVideo" src="" controls autoplay loop playsinline style="display:none;"></video>
+      </div>
+      <div class="modal-card-footer">
+        <p id="lightboxPromptText" class="modal-prompt-line"></p>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn-modal-action flow" id="lightboxAnimateBtn" style="display:none;">🌊 Animate in Flow</button>
+          <button type="button" class="btn-modal-action" id="lightboxDownloadBtn">💾 Download Asset</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session & Cluster Info Modal -->
+  <div class="modal-overlay" id="sessionInfoModal">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-card-header">
+        <h3>Google Account Session Status</h3>
+        <button type="button" class="btn-modal-close" id="closeSessionModalBtn">✕</button>
+      </div>
+      <div class="modal-card-body" style="padding: 16px; color: var(--text-muted); font-size: 11px; line-height: 1.5;">
+        <p style="margin-bottom: 10px;">RenderX Image Studio operates <strong style="color:#10B981;">100% at the Google Account level</strong> using your browser's active session without requiring any paid API keys or AI Studio tokens.</p>
+        <div style="background:#05070B; padding:10px; border-radius:6px; border:1px solid #1E293B; margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span>Gemini Canvas Session:</span>
+            <strong style="color:#38BDF8;" id="infoGeminiState">Connected</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span>Google Flow Session:</span>
+            <strong style="color:#10B981;" id="infoFlowState">Active</strong>
+          </div>
+        </div>
+        <p style="font-size: 10px; color: var(--text-dim);">To generate media, simply log in to your Google Account at <code style="color:#38BDF8;">gemini.google.com</code> or <code style="color:#38BDF8;">flow.google.com</code>. The extension will automatically coordinate generation.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Capsule -->
+  <div class="toast-capsule" id="toastCapsule">
+    <span id="toastText">Ready</span>
+  </div>
+
+  <!-- Local Libraries & Dashboard Controller -->
+  <script src="libs/jszip.min.js?v=1.0.8"></script>
+  <script src="dashboard.js?v=1.0.8"></script>
+</body>
+</html>
