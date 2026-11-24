@@ -1224,6 +1224,75 @@ def _flow_ratio_label(ar: str) -> str:
     return "1:1 Square format"
 
 
+async def _flow_attach_ingredient_image(page: Page, data_url: str, prefix: str = "rx_ing") -> bool:
+    """Attach a Dashboard reference image (Character, Style, or Init Frame) into Flow Agent prompt box."""
+    if not data_url or "," not in data_url:
+        return False
+    fd, tmp_path = tempfile.mkstemp(prefix=f"{prefix}_", suffix=".png")
+    os.close(fd)
+    try:
+        Path(tmp_path).write_bytes(base64.b64decode(data_url.split(",", 1)[1]))
+        add_ing = page.locator('button[aria-label="Add ingredients to the prompt box"]:visible, button[aria-label="Add media menu"]:visible').first
+        if await add_ing.count() == 0:
+            return False
+        await add_ing.click(timeout=4000)
+        await asyncio.sleep(0.7)
+
+        upload_btn = page.locator('.cdk-overlay-container button, .cdk-overlay-container [role="menuitem"]').filter(has_text=re.compile(r"Upload media", re.I)).first
+        if await upload_btn.count() > 0:
+            async with page.expect_file_chooser(timeout=10000) as fc_info:
+                await upload_btn.click(timeout=4000)
+            fc = await fc_info.value
+            await fc.set_files(tmp_path)
+            await asyncio.sleep(2.2)
+            await _flow_dismiss_banners(page)
+            return True
+
+        file_inp = page.locator("input[type=file]").first
+        if await file_inp.count() > 0:
+            await file_inp.set_input_files(tmp_path)
+            await asyncio.sleep(2.0)
+            await _flow_dismiss_banners(page)
+            return True
+    except Exception:
+        pass
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+    return False
+
+
+def _build_flow_agent_directives(aspect_ratio: str, is_video: bool, options: Dict[str, Any], has_char_img: bool, has_style_img: bool) -> str:
+    parts = [
+        f"Mode: {'Video' if is_video else 'Image'}",
+        f"Locked Aspect Ratio: {aspect_ratio} ({_flow_ratio_label(aspect_ratio)})",
+        "Outputs per prompt: Exactly 1 (x1)",
+    ]
+    char_desc = (options.get("charDesc") or "").strip()
+    style_desc = (options.get("styleDesc") or "").strip()
+    neg_prompt = (options.get("negPrompt") or "").strip()
+
+    if has_char_img or char_desc:
+        c_line = "Character Consistency (LOCKED): "
+        if has_char_img:
+            c_line += "Use the attached Character Reference image consistently for character identity/features"
+        if char_desc:
+            c_line += (" — " if has_char_img else "") + char_desc
+        parts.append(c_line)
+    if has_style_img or style_desc:
+        s_line = "Style Consistency (LOCKED): "
+        if has_style_img:
+            s_line += "Match the attached Style Reference image art style, lighting, and palette"
+        if style_desc:
+            s_line += (" — " if has_style_img else "") + style_desc
+        parts.append(s_line)
+    if neg_prompt:
+        parts.append(f"Negative / Strictly Avoid (DO NOT include): {neg_prompt}")
+    return " | ".join(parts)
+
+
 async def _flow_paste_and_submit(page: Page, text: str):
     compose = page.locator(
         'div[aria-label="Describe your goal"][contenteditable="true"]:visible, '
@@ -1247,33 +1316,15 @@ async def _flow_paste_and_submit(page: Page, text: str):
         await compose.press("Enter")
 
 
-async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 120) -> str:
-    clean_p = sanitize_prompt(item["fullPrompt"])
+async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, directives: str = "", timeout_sec: int = 120) -> str:
+    clean_p = sanitize_prompt(item.get("rawPrompt") or item["fullPrompt"])
     ar = item.get("aspectRatio", "1:1")
     is_video = "video" in sub_mode
 
-    # If image-to-video & reference image provided, upload to Flow
+    # If image-to-video & reference image provided, attach to Flow Agent ingredients
     ref_b64 = item.get("referenceImage") or ""
     if is_video and ref_b64 and "," in ref_b64:
-        try:
-            add_btn = page.locator('button[aria-label="Add ingredients to the prompt box"]:visible, button[aria-label="Add media menu"]:visible').first
-            if await add_btn.count() > 0 and await add_btn.is_visible():
-                await add_btn.click()
-                await asyncio.sleep(0.8)
-            file_inp = page.locator("input[type=file]").first
-            if await file_inp.count() > 0:
-                fd, tmp_ref = tempfile.mkstemp(prefix="rx_flow_", suffix=".png")
-                os.close(fd)
-                Path(tmp_ref).write_bytes(base64.b64decode(ref_b64.split(",", 1)[1]))
-                await file_inp.set_input_files(tmp_ref)
-                await asyncio.sleep(1.5)
-                await _flow_dismiss_banners(page)
-                try:
-                    os.remove(tmp_ref)
-                except OSError:
-                    pass
-        except Exception:
-            pass
+        await _flow_attach_ingredient_image(page, ref_b64, prefix="rx_i2v")
 
     media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
     before_srcs = set(
@@ -1282,10 +1333,11 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
         )
     )
 
+    dir_block = f"[{directives}]\n" if directives else ""
     directive = (
-        f"Generate 1 image ({ar} {_flow_ratio_label(ar)}): {clean_p}"
+        f"{dir_block}Generate 1 image ({ar} {_flow_ratio_label(ar)}): {clean_p}"
         if not is_video else
-        f"Generate 1 video ({ar} {_flow_ratio_label(ar)}): {clean_p}"
+        f"{dir_block}Generate 1 video ({ar} {_flow_ratio_label(ar)}): {clean_p}"
     )
     await _flow_paste_and_submit(page, directive)
 
@@ -1322,8 +1374,10 @@ async def run_flow_profile_worker(
     item_map: Dict[int, Dict[str, Any]],
     sub_mode: str,
     batch_dir: Path,
+    options: Optional[Dict[str, Any]] = None,
 ):
     pid = profile["id"]
+    options = options or {}
     async with get_profile_lock(pid):
         ctx = await get_or_open_worker_context(pid)
         page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
@@ -1354,19 +1408,28 @@ async def run_flow_profile_worker(
             first_ar = assigned_items[0].get("aspectRatio", "1:1") if assigned_items else "1:1"
             is_video = "video" in sub_mode
 
-            # Step 1: Lock Image/Video mode, exact Aspect Ratio (9:16 Reels / 16:9 Desktop / 1:1 Square), and x1 (1 per prompt)
+            # Step 1: Lock Mode, Exact Dashboard Aspect Ratio (9:16 Reels / 16:9 Desktop / 1:1 Square), and x1 (1 per prompt)
             await _flow_configure(page, first_ar, is_video=is_video)
             # Step 2: Activate Flow Agent Mode ("spark", aria-pressed="true")
             agent_on = await _flow_set_agent_mode(page, enable=True)
 
+            # Step 3: Attach Dashboard Reference Images (Character, Style, and/or I2V Init Frame) into Flow Agent ingredients
+            has_char_img = False
+            has_style_img = False
+            if options.get("charImageBase64"):
+                has_char_img = await _flow_attach_ingredient_image(page, options["charImageBase64"], prefix="rx_char")
+            if options.get("styleImageBase64"):
+                has_style_img = await _flow_attach_ingredient_image(page, options["styleImageBase64"], prefix="rx_style")
+
+            directives = _build_flow_agent_directives(first_ar, is_video, options, has_char_img, has_style_img)
             await broadcast_ws({
                 "type": "DIAGNOSTIC_LOG",
-                "text": f"[{pid}] Flow Agent {'ON' if agent_on else 'Ready'} | Mode: {'Video' if is_video else 'Image'} | Ratio: {first_ar} | x1 per prompt"
+                "text": f"[{pid}] Flow Agent {'ON' if agent_on else 'Ready'} | {directives[:140]}"
             })
 
             media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
 
-            # Batch mode (multi-prompt image generation): paste ALL prompts once into Flow Agent, stream outputs live, recover any missing individually
+            # Batch mode (multi-prompt image generation): paste ALL prompts + Dashboard directives at once into Flow Agent
             if len(assigned_items) > 1 and not is_video:
                 before_srcs = set(
                     await page.evaluate(f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)")
@@ -1375,14 +1438,14 @@ async def run_flow_profile_worker(
                     await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
 
                 numbered = "\n".join(
-                    f"{i+1}. {sanitize_prompt(it['fullPrompt'])}"
+                    f"{i+1}. {sanitize_prompt(it['rawPrompt'] or it['fullPrompt'])}"
                     for i, it in enumerate(assigned_items)
                 )
                 batch_msg = (
-                    f"Generate exactly 1 separate image (x1) for each numbered prompt below in {_flow_ratio_label(first_ar)} ({first_ar}). "
-                    f"Generate all {len(assigned_items)} images in exact numbered order without skipping or merging:\n{numbered}"
+                    f"[DASHBOARD REQUIREMENTS LOCKED]\n{directives}\n\n"
+                    f"Generate all {len(assigned_items)} separate images in exact numbered order (do not merge or skip):\n{numbered}"
                 )
-                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Pasted {len(assigned_items)} prompts into Flow Agent ({first_ar}, x1)..."})
+                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Pasted {len(assigned_items)} prompts + Dashboard specs into Flow Agent..."})
                 await _flow_paste_and_submit(page, batch_msg)
 
                 collected_idx = 0
@@ -1428,7 +1491,7 @@ async def run_flow_profile_worker(
                     if state.should_stop:
                         break
                     try:
-                        media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=110)
+                        media = await _flow_submit_ui_shot(page, it, sub_mode, directives=directives, timeout_sec=110)
                         await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
                     except Exception as shot_err:
                         await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
@@ -1442,9 +1505,10 @@ async def run_flow_profile_worker(
                         await _flow_configure(page, cur_ar, is_video=is_video)
                         await _flow_set_agent_mode(page, enable=True)
                         last_ar = cur_ar
+                        directives = _build_flow_agent_directives(cur_ar, is_video, options, has_char_img, has_style_img)
                     await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
                     try:
-                        media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
+                        media = await _flow_submit_ui_shot(page, it, sub_mode, directives=directives, timeout_sec=120)
                         await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
                     except Exception as shot_err:
                         await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
@@ -1770,6 +1834,7 @@ class BatchStartReq(BaseModel):
     engine: str = "gemini-canvas"
     subMode: str = "image"
     isRetry: bool = False
+    negPrompt: Optional[str] = None
     charDesc: Optional[str] = None
     styleDesc: Optional[str] = None
     charImageBase64: Optional[str] = None
@@ -1888,6 +1953,7 @@ async def api_batch_start(req: BatchStartReq):
         buckets[chosen["id"]].append(item)
 
     options = {
+        "negPrompt": req.negPrompt,
         "charDesc": req.charDesc,
         "styleDesc": req.styleDesc,
         "charImageBase64": req.charImageBase64,
@@ -1905,7 +1971,7 @@ async def api_batch_start(req: BatchStartReq):
             if not chunk:
                 continue
             if req.engine == "google-flow":
-                tasks.append(run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir))
+                tasks.append(run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir, options))
             else:
                 tasks.append(run_canvas_profile_worker(p, chunk, item_map, batch_dir, options))
         if tasks:
