@@ -475,7 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function setupUploadHandler(fileInput, thumbBox, imgEl, removeBtn, stateKey, toastLabel) {
+  function setupUploadHandler(fileInput, thumbBox, imgEl, removeBtn, stateKey, toastLabel, toggleEl) {
     if (!fileInput || !imgEl) return;
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -485,7 +485,8 @@ document.addEventListener('DOMContentLoaded', () => {
         state[stateKey] = ev.target.result;
         imgEl.src = ev.target.result;
         if (thumbBox) thumbBox.style.display = 'flex';
-        showToast(`${toastLabel} image attached`);
+        if (toggleEl && !toggleEl.checked) toggleEl.checked = true;
+        showToast(`${toastLabel} image attached & auto-locked`);
       };
       reader.readAsDataURL(file);
     });
@@ -499,8 +500,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  setupUploadHandler(charInputFile, charPreviewBox, charPreviewImg, charRemoveBtn, 'charImageBase64', 'Character');
-  setupUploadHandler(styleInputFile, stylePreviewBox, stylePreviewImg, styleRemoveBtn, 'styleImageBase64', 'Style');
+  setupUploadHandler(charInputFile, charPreviewBox, charPreviewImg, charRemoveBtn, 'charImageBase64', 'Character', charToggle);
+  setupUploadHandler(styleInputFile, stylePreviewBox, stylePreviewImg, styleRemoveBtn, 'styleImageBase64', 'Style', styleToggle);
 
   // ================= 5. Negative Prompts =================
   function updateNegativeCount() {
