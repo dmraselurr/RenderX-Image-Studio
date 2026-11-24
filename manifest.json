@@ -1,10 +1,9 @@
 {
   "manifest_version": 3,
   "name": "RenderX Image Studio",
-  "version": "1.1.0",
-  "description": "Dual-mode account-level bulk media studio (Gemini Canvas & Google Flow) attached inside Chrome Side Panel.",
+  "version": "1.2.0",
+  "description": "Dual-mode account-level bulk media studio (Gemini Canvas & Google Flow) docked at 70vw inside Chrome.",
   "permissions": [
-    "sidePanel",
     "tabs",
     "scripting",
     "storage",
@@ -16,14 +15,15 @@
     "https://*.flow.google/*",
     "https://flow.google/*",
     "https://labs.google/*",
+    "https://aitestkitchen.withgoogle.com/*",
     "https://*.google.com/*",
     "https://*.googleusercontent.com/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
-  "side_panel": {
-    "default_path": "dashboard.html"
+  "action": {
+    "default_title": "Open RenderX Image Studio"
   },
   "content_scripts": [
     {
@@ -49,9 +49,23 @@
       "run_at": "document_idle"
     }
   ],
-  "action": {
-    "default_title": "Open RenderX Image Studio"
-  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "dashboard.html",
+        "dashboard.css",
+        "dashboard.js",
+        "jszip.min.js",
+        "libs/*",
+        "icons/*",
+        "js/*",
+        "css/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "icons": {
     "128": "icons/icon128.png"
   }
