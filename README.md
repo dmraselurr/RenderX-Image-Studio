@@ -38,7 +38,7 @@ It generates 100–150+ high-quality images in minutes with **Character Consiste
 3. Enable **Developer mode** (toggle in the top-right corner).
 4. Click **Load unpacked** (button in the top-left).
 5. Select this folder:
-   `c:\Users\Raselur Rahman\Desktop\SaaS Development\Gemini Cnvas Image generator`
+   `C:\Users\Raselur Rahman\Desktop\SaaS Tools\Render X. Image Studio`
 6. Pin **RenderX Image Studio** to your extension bar.
 7. Click the icon anytime to open the full-screen studio!
 
