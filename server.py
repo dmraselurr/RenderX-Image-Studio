@@ -1,7 +1,7 @@
 """
 RenderX Image Studio - Desktop Multi-Profile Cluster Engine (FastAPI + Playwright)
-Supports up to 8+ persistent Google/Chrome profiles running Gemini Canvas (q4uTj RPC)
-and Google Flow (aisandbox-pa API) concurrently with ZERO visible tabs & disk auto-save.
+Ported from RenderX Studio Pro's proven Chrome Profile Setup, Google Login detection,
+Gemini Canvas (Share App + Concurrent Grid Streaming), and Google Flow (labs.google/fx/tools/flow).
 """
 
 import asyncio
@@ -10,10 +10,13 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -21,27 +24,54 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from playwright.async_api import async_playwright, BrowserContext, Page
+from playwright.async_api import async_playwright, BrowserContext, Page, Frame
 
 BASE_DIR = Path(__file__).resolve().parent
 PROFILES_DIR = BASE_DIR / "profiles"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 PROFILES_META_FILE = PROFILES_DIR / "profiles.json"
 
+PRO_PROFILES_CANDIDATES = [
+    Path(r"C:\Users\Raselur Rahman\Desktop\SaaS Tools\Render X Studio pro\ai_avatar_pipeline\browser_profiles"),
+    Path(r"C:\Users\Raselur Rahman\Desktop\SaaS Tools\Render X Studio pro\src\backend\frameloom_engine\ai_avatar_pipeline\browser_profiles"),
+]
+
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-CHROME_CANDIDATES = [
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-]
-CHROME_EXE = next((p for p in CHROME_CANDIDATES if os.path.exists(p)), None)
-
 GEMINI_SHARE_URL = "https://gemini.google.com/share/f8350ff50be0"
-FLOW_URL = "https://flow.google.com"
+FLOW_URL = "https://labs.google/fx/tools/flow"
 
-app = FastAPI(title="RenderX Image Studio Desktop Engine", version="2.0.0")
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+_GOOGLE_SIGNIN_COOKIES = (
+    "SID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "SAPISID",
+    "APISID",
+    "HSID",
+    "SSID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+)
+
+
+def find_chrome_exe() -> Optional[str]:
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return shutil.which("chrome") or shutil.which("msedge")
+
+
+CHROME_EXE = find_chrome_exe()
+
+app = FastAPI(title="RenderX Image Studio Desktop Engine", version="2.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -54,8 +84,8 @@ app.add_middleware(
 class EngineState:
     def __init__(self):
         self.pw = None
-        self.login_contexts: Dict[str, BrowserContext] = {}
         self.worker_contexts: Dict[str, BrowserContext] = {}
+        self.login_open_pids: set = set()
         self.profile_locks: Dict[str, asyncio.Lock] = {}
         self.ws_clients: List[WebSocket] = []
 
@@ -65,7 +95,6 @@ class EngineState:
         self.current_engine = "gemini-canvas"
         self.current_sub_mode = "image"
         self.last_batch_dir: Path = OUTPUTS_DIR
-        self.captured_images: set = set()
 
 
 state = EngineState()
@@ -77,27 +106,277 @@ def get_profile_lock(pid: str) -> asyncio.Lock:
     return state.profile_locks[pid]
 
 
-# ================= Profile Storage =================
+# ================= Process & Chrome Window Helpers (from RenderX Studio Pro) =================
+def get_chrome_pids_for_dir(user_data_dir: Path) -> List[int]:
+    target = os.path.abspath(str(user_data_dir)).lower()
+    if not target:
+        return []
+    try:
+        out = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe' or Name='msedge.exe'\" | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            creationflags=_NO_WINDOW,
+        )
+        rows = json.loads(out.stdout or "[]")
+    except Exception:
+        return []
+    if isinstance(rows, dict):
+        rows = [rows]
+    return [
+        int(row["ProcessId"])
+        for row in rows
+        if row.get("ProcessId") and target in (row.get("CommandLine") or "").lower()
+    ]
+
+
+def kill_stale_chrome(user_data_dir: Path) -> int:
+    pids = get_chrome_pids_for_dir(user_data_dir)
+    if not pids:
+        return 0
+    for pid in pids:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True, timeout=15, creationflags=_NO_WINDOW)
+        except Exception:
+            pass
+    time.sleep(2.5)
+    still = []
+    for pid in pids:
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=_NO_WINDOW,
+            )
+            if str(pid) in (out.stdout or ""):
+                still.append(pid)
+        except Exception:
+            pass
+    for pid in still:
+        try:
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=15, creationflags=_NO_WINDOW)
+        except Exception:
+            pass
+    if still:
+        time.sleep(1.5)
+    return len(pids)
+
+
+def _clear_lockfiles(p_path: Path):
+    for name in ("lockfile", "SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lf = p_path / name
+        if lf.exists():
+            try:
+                lf.unlink()
+            except Exception:
+                pass
+
+
+def _normalize_window_placement(p_path: Path):
+    prefs_path = p_path / "Default" / "Preferences"
+    if not prefs_path.is_file():
+        return
+    try:
+        data = json.loads(prefs_path.read_text(encoding="utf-8", errors="ignore"))
+        browser_cfg = data.setdefault("browser", {})
+        browser_cfg["window_placement"] = {
+            "bottom": 670,
+            "left": 50,
+            "maximized": False,
+            "right": 1230,
+            "top": 30,
+            "work_area_bottom": 1040,
+            "work_area_left": 0,
+            "work_area_right": 1920,
+            "work_area_top": 0,
+        }
+        prefs_path.write_text(json.dumps(data), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def profile_login_state(profile_dir: Path) -> Dict[str, Any]:
+    """
+    Exact RenderX Studio Pro profile detection:
+    1) Reads Default/Preferences for account_info email & REFRESH_TOKEN_RECEIVED
+    2) Copies Default/Network/Cookies (or Default/Cookies) to temp sqlite DB to check _GOOGLE_SIGNIN_COOKIES
+    """
+    email: Optional[str] = None
+    refresh_ok = False
+    has_data = False
+
+    prefs_path = profile_dir / "Default" / "Preferences"
+    if prefs_path.is_file():
+        has_data = True
+        try:
+            prefs = json.loads(prefs_path.read_text(encoding="utf-8", errors="ignore"))
+            acc_info = prefs.get("account_info")
+            if isinstance(acc_info, list) and len(acc_info) > 0 and isinstance(acc_info[0], dict):
+                email = acc_info[0].get("email") or None
+            gs = prefs.get("google", {}).get("services", {}).get("signin", {})
+            if gs.get("REFRESH_TOKEN_RECEIVED") or gs.get("last_signed_in_account_info"):
+                refresh_ok = True
+        except Exception:
+            pass
+
+    cookie_ok = False
+    locked = False
+    for rel in ("Default/Network/Cookies", "Default/Cookies"):
+        db = profile_dir / rel
+        if not db.is_file():
+            continue
+        has_data = True
+        fd, tmp = tempfile.mkstemp(prefix="rx_ck_", suffix=".db")
+        os.close(fd)
+        try:
+            shutil.copy2(str(db), tmp)
+            conn = sqlite3.connect(tmp)
+            try:
+                placeholders = ",".join("?" for _ in _GOOGLE_SIGNIN_COOKIES)
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM cookies WHERE host_key LIKE '%google.com%' AND name IN ({placeholders})",
+                    _GOOGLE_SIGNIN_COOKIES,
+                ).fetchone()
+                if row and row[0] > 0:
+                    cookie_ok = True
+                    break
+            finally:
+                conn.close()
+        except Exception:
+            locked = True
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+    is_logged = bool(cookie_ok or (email and refresh_ok))
+    if is_logged:
+        status = f"Signed in ({email})" if email else "Signed in (Google cookies verified)"
+        login_tag = "yes"
+    elif locked:
+        status = f"In use ({email})" if email else "Chrome open — sign in to Google"
+        login_tag = "in_use"
+    else:
+        status = "Not signed in — Click Login"
+        login_tag = "no"
+
+    return {
+        "login": login_tag,
+        "logged_in": is_logged,
+        "email": email or "",
+        "has_data": has_data,
+        "status": status,
+    }
+
+
+def open_real_chrome_for_login(pid: str, engine: str = "gemini-canvas") -> Tuple[bool, str]:
+    """
+    Exact RenderX Studio Pro Windows launcher:
+    Clears stale lockfiles, fixes window placement, and launches real chrome.exe
+    on accounts.google.com + Gemini Canvas / Google Flow so Google Sign-In never blocks!
+    """
+    chrome_bin = find_chrome_exe()
+    if not chrome_bin:
+        return False, "Google Chrome executable not found!"
+
+    p_path = PROFILES_DIR / pid
+    p_path.mkdir(parents=True, exist_ok=True)
+    _clear_lockfiles(p_path)
+    _normalize_window_placement(p_path)
+
+    google_url = "https://accounts.google.com"
+    engine_url = FLOW_URL if engine == "google-flow" else GEMINI_SHARE_URL
+
+    try:
+        bat_path = p_path / "launch_login.bat"
+        bat_content = (
+            f'@echo off\n'
+            f'start "" "{chrome_bin}" --user-data-dir="{str(p_path)}" '
+            f'--window-position=50,30 --window-size=1180,640 --new-window "{google_url}" "{engine_url}"\n'
+        )
+        bat_path.write_text(bat_content, encoding="utf-8")
+
+        task_name = f"RenderXImgLogin_{pid}_{int(time.time())}"
+        r = subprocess.run(
+            ["schtasks", "/create", "/tn", task_name, "/tr", f'"{str(bat_path)}"', "/sc", "once", "/st", "23:59", "/f", "/it"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+        if r.returncode == 0:
+            subprocess.run(["schtasks", "/run", "/tn", task_name], capture_output=True, text=True, timeout=10, creationflags=_NO_WINDOW)
+            time.sleep(0.8)
+            subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True, timeout=10, creationflags=_NO_WINDOW)
+            return True, f"Opened real Chrome for {pid}"
+    except Exception:
+        pass
+
+    try:
+        subprocess.Popen(
+            [
+                chrome_bin,
+                f"--user-data-dir={str(p_path)}",
+                "--window-position=50,30",
+                "--window-size=1180,640",
+                "--new-window",
+                google_url,
+                engine_url,
+            ]
+        )
+        return True, f"Opened Chrome for {pid}"
+    except Exception as exc:
+        return False, str(exc)
+
+
+# ================= Profile Storage & Sync =================
+def _find_pro_profiles_dir() -> Optional[Path]:
+    for cand in PRO_PROFILES_CANDIDATES:
+        if cand.is_dir():
+            return cand
+    return None
+
+
 def default_profiles() -> List[Dict[str, Any]]:
+    # Preserve existing empty acc1..acc8 or migrate empty legacy profile_01..08
+    legacy_dirs = [PROFILES_DIR / f"profile_{i:02d}" for i in range(1, 9)]
+    has_logged_legacy = any(
+        d.is_dir() and profile_login_state(d).get("logged_in")
+        for d in legacy_dirs
+    )
+    if not has_logged_legacy:
+        for d in legacy_dirs:
+            if d.is_dir() and not profile_login_state(d).get("has_data"):
+                shutil.rmtree(d, ignore_errors=True)
+
     profiles = []
     for i in range(1, 9):
-        pid = f"profile_{i:02d}"
-        (PROFILES_DIR / pid).mkdir(parents=True, exist_ok=True)
+        pid = f"acc{i}"
+        pdir = PROFILES_DIR / pid
+        pdir.mkdir(parents=True, exist_ok=True)
+        lstate = profile_login_state(pdir)
         profiles.append({
             "id": pid,
-            "name": f"Chrome Profile {i:02d}",
-            "email": "",
-            "enabled": (i == 1),
-            "logged_in": False,
-            "canvas_ready": False,
-            "flow_ready": False,
-            "canvas_template": None,
-            "flow_template": None,
+            "name": f"Account {i} ({pid})",
+            "email": lstate["email"],
+            "enabled": (i == 1) or lstate["logged_in"],
+            "logged_in": lstate["logged_in"],
+            "status": lstate["status"],
         })
     return profiles
 
 
-def load_profiles() -> List[Dict[str, Any]]:
+def load_profiles(refresh_disk: bool = True) -> List[Dict[str, Any]]:
     if not PROFILES_META_FILE.exists():
         profs = default_profiles()
         save_profiles(profs)
@@ -105,8 +384,35 @@ def load_profiles() -> List[Dict[str, Any]]:
     try:
         data = json.loads(PROFILES_META_FILE.read_text(encoding="utf-8"))
         if isinstance(data, list) and len(data) > 0:
+            # Auto-upgrade old unlogged profile_01..08 list to acc1..acc8
+            all_legacy = all(str(p.get("id", "")).startswith("profile_") for p in data)
+            any_logged = any(
+                (PROFILES_DIR / p["id"]).is_dir() and profile_login_state(PROFILES_DIR / p["id"]).get("logged_in")
+                for p in data if p.get("id")
+            )
+            if all_legacy and not any_logged:
+                profs = default_profiles()
+                save_profiles(profs)
+                return profs
+
+            changed = False
             for p in data:
-                (PROFILES_DIR / p["id"]).mkdir(parents=True, exist_ok=True)
+                pdir = PROFILES_DIR / p["id"]
+                pdir.mkdir(parents=True, exist_ok=True)
+                if refresh_disk:
+                    lstate = profile_login_state(pdir)
+                    if lstate["logged_in"] != bool(p.get("logged_in")) or lstate["email"] != (p.get("email") or ""):
+                        p["logged_in"] = lstate["logged_in"]
+                        p["email"] = lstate["email"]
+                        p["status"] = lstate["status"]
+                        if lstate["logged_in"] and not p.get("enabled"):
+                            p["enabled"] = True
+                        changed = True
+                    elif p.get("status") != lstate["status"]:
+                        p["status"] = lstate["status"]
+                        changed = True
+            if changed:
+                save_profiles(data)
             return data
     except Exception:
         pass
@@ -120,16 +426,18 @@ def save_profiles(profiles: List[Dict[str, Any]]):
 
 
 def public_profile_view(p: Dict[str, Any]) -> Dict[str, Any]:
+    pid = p["id"]
     return {
-        "id": p["id"],
-        "name": p["name"],
+        "id": pid,
+        "name": p.get("name", pid),
         "email": p.get("email", ""),
         "enabled": bool(p.get("enabled", False)),
         "logged_in": bool(p.get("logged_in", False)),
-        "canvas_ready": bool(p.get("canvas_template")),
-        "flow_ready": bool(p.get("flow_template")),
-        "is_login_open": p["id"] in state.login_contexts,
-        "is_worker_active": p["id"] in state.worker_contexts,
+        "status": p.get("status", ""),
+        "canvas_ready": bool(p.get("logged_in", False)),
+        "flow_ready": bool(p.get("logged_in", False)),
+        "is_login_open": pid in state.login_open_pids,
+        "is_worker_active": pid in state.worker_contexts,
     }
 
 
@@ -149,7 +457,7 @@ async def broadcast_ws(payload: Dict[str, Any]):
 def sanitize_prompt(raw: str) -> str:
     if not raw:
         return ""
-    text = str(raw)
+    text = str(raw).replace("\r", " ").replace("\n", " ")
     text = re.sub(r"^\s*\[?[0-9.:\-\s]+\]?\s*\|\s*(Scene\s*\d+\s*:?\s*)?", "", text, flags=re.I)
     text = re.sub(r"^\s*\[[0-9.:\-\s]+\]\s*(Scene\s*\d+\s*:?\s*)?", "", text, flags=re.I)
     text = re.sub(r"^\s*Scene\s*\d+\s*:?\s*", "", text, flags=re.I)
@@ -171,257 +479,400 @@ def save_data_url_to_disk(data_url: str, target_path: Path):
         target_path.write_bytes(base64.b64decode(b64))
 
 
-async def launch_chrome_context(pid: str, headless: bool) -> BrowserContext:
-    user_dir = str(PROFILES_DIR / pid)
-    kwargs: Dict[str, Any] = {
-        "user_data_dir": user_dir,
-        "headless": headless,
-        "ignore_default_args": ["--enable-automation"],
-        "args": [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-        ],
-        "viewport": {"width": 1280, "height": 860},
-    }
-    if CHROME_EXE:
-        kwargs["executable_path"] = CHROME_EXE
-    return await state.pw.chromium.launch_persistent_context(**kwargs)
-
-
-async def detect_google_login(ctx: BrowserContext) -> bool:
-    try:
-        cookies = await ctx.cookies(["https://gemini.google.com", "https://accounts.google.com", "https://labs.google"])
-        names = {c.get("name") for c in cookies}
-        return bool({"SID", "__Secure-1PSID", "__Secure-3PSID"} & names)
-    except Exception:
-        return False
-
-
-async def get_or_open_worker_context(pid: str) -> BrowserContext:
-    # Reuse visible login window if open (prevents Windows Chrome profile directory lock!)
-    if pid in state.login_contexts:
-        return state.login_contexts[pid]
-    if pid in state.worker_contexts:
+async def get_or_open_worker_context(pid: str, clear_existing_chrome: bool = False) -> BrowserContext:
+    """
+    Opens a minimized real-Chrome Playwright persistent context (RenderX Studio Pro style)
+    so Google Canvas & Flow sessions work reliably in the background without triggering headless detection.
+    """
+    if pid in state.worker_contexts and not clear_existing_chrome:
         try:
             _ = state.worker_contexts[pid].pages
             return state.worker_contexts[pid]
         except Exception:
             state.worker_contexts.pop(pid, None)
-    ctx = await launch_chrome_context(pid, headless=True)
+
+    if pid in state.worker_contexts:
+        try:
+            await state.worker_contexts[pid].close()
+        except Exception:
+            pass
+        state.worker_contexts.pop(pid, None)
+
+    p_path = PROFILES_DIR / pid
+    p_path.mkdir(parents=True, exist_ok=True)
+
+    # Release any real Chrome login window still locking this profile directory
+    await asyncio.to_thread(kill_stale_chrome, p_path)
+    state.login_open_pids.discard(pid)
+    _clear_lockfiles(p_path)
+
+    kwargs: Dict[str, Any] = {
+        "user_data_dir": str(p_path),
+        "headless": False,
+        "accept_downloads": True,
+        "timeout": 120_000,
+        "viewport": {"width": 1280, "height": 900},
+        "ignore_default_args": ["--enable-automation", "--disable-extensions"],
+        "args": [
+            "--start-minimized",
+            "--window-position=50,30",
+            "--window-size=1280,900",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-background-timer-throttling",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+        ],
+    }
+    if CHROME_EXE:
+        kwargs["executable_path"] = CHROME_EXE
+
+    ctx = await state.pw.chromium.launch_persistent_context(**kwargs)
     state.worker_contexts[pid] = ctx
+
+    def on_ctx_close(_):
+        state.worker_contexts.pop(pid, None)
+        asyncio.create_task(broadcast_ws({"type": "PROFILES_UPDATED"}))
+
+    ctx.on("close", on_ctx_close)
+    await broadcast_ws({"type": "PROFILES_UPDATED"})
     return ctx
 
 
-# ================= Playwright In-Page Runners =================
-CANVAS_EVAL_BATCH_JS = r"""
-async ({ items, template }) => {
-  const results = [];
-  const rawUrl = template.url;
-  const rawBody = template.body;
-  const promptHint = template.promptHint || '';
-  let reqCounter = Math.floor(100000 + Math.random() * 800000);
+async def handle_shot_result(pid: str, res: Dict[str, Any], item_map: Dict[int, Dict[str, Any]], batch_dir: Path, sub_mode: str):
+    idx = res["index"]
+    item = item_map.get(idx)
+    if not item or item.get("status") == "done":
+        return
 
-  function looksLikeJson(s) {
-    if (typeof s !== 'string') return false;
-    const t = s.trim();
-    return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'));
-  }
+    if res.get("ok") and res.get("dataUrl"):
+        data_url = res["dataUrl"]
+        if data_url.startswith("https://"):
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(data_url, timeout=aiohttp.ClientTimeout(total=45)) as r:
+                        if r.status == 200:
+                            raw_bytes = await r.read()
+                            ct = r.headers.get("content-type", "image/png" if "video" not in sub_mode else "video/mp4").split(";")[0]
+                            data_url = f"data:{ct};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
+            except Exception:
+                pass
 
-  function cloneAndPatchBody(rawBodyStr, capturedPrompt, newPrompt, targetRatio) {
-    const params = new URLSearchParams(rawBodyStr);
-    const fReqRaw = params.get('f.req');
-    if (!fReqRaw) throw new Error('Captured q4uTj body missing f.req');
-    const outer = JSON.parse(fReqRaw);
-    const innerStr = outer[0][1];
-    const ratioWord = (targetRatio === '16:9') ? 'landscape' : (targetRatio === '9:16' ? 'portrait' : 'square');
-    let replaced = false;
+        item["dataUrl"] = data_url
+        item["status"] = "done"
+        fn = item.get("filename") or (f"{idx:02d}.mp4" if "video" in sub_mode else f"{idx:02d}.png")
+        save_data_url_to_disk(data_url, batch_dir / fn)
 
-    function transformNode(node, parentKey = '') {
-      if (typeof node === 'string') {
-        if (looksLikeJson(node)) {
-          try { return JSON.stringify(transformNode(JSON.parse(node), parentKey)); } catch (e) {}
-        }
-        if (capturedPrompt && node === capturedPrompt) { replaced = true; return newPrompt; }
-        if (capturedPrompt && node.includes(capturedPrompt)) { replaced = true; return node.split(capturedPrompt).join(newPrompt); }
-        if (node === '1:1' || node === '16:9' || node === '9:16') return targetRatio;
-        if (node === 'square' || node === 'landscape' || node === 'portrait') return ratioWord;
-        const k = String(parentKey).toLowerCase();
-        if ((k === 'prompt' || k === 'text') && node.length > 2 && !node.startsWith('http')) {
-          replaced = true;
-          return newPrompt;
-        }
-        return node;
-      }
-      if (Array.isArray(node)) return node.map(c => transformNode(c, parentKey));
-      if (node && typeof node === 'object') {
-        const out = {};
-        for (const [k, v] of Object.entries(node)) {
-          if ((k === 'aspectRatio' || k === 'aspect_ratio') && typeof v === 'string') out[k] = targetRatio;
-          else out[k] = transformNode(v, k);
-        }
-        return out;
-      }
-      return node;
-    }
+        completed = sum(1 for x in state.current_items if x.get("status") == "done")
+        await broadcast_ws({
+            "type": "ITEM_COMPLETED",
+            "index": idx,
+            "profileId": pid,
+            "httpStatus": res.get("httpStatus", 200),
+            "mediaType": "video" if "video" in sub_mode else "image",
+            "dataUrl": data_url,
+            "completedCount": completed,
+            "total": len(state.current_items),
+        })
+        await broadcast_ws({
+            "type": "DIAGNOSTIC_LOG",
+            "text": f"[{pid}] Shot #{idx}: Saved {fn} ({completed}/{len(state.current_items)})"
+        })
+    else:
+        item["status"] = "failed"
+        item["error"] = res.get("error", "Unknown error")
+        await broadcast_ws({
+            "type": "ITEM_FAILED",
+            "index": idx,
+            "profileId": pid,
+            "httpStatus": res.get("httpStatus", 0),
+            "error": f"[{pid}] {item['error']}"
+        })
+        await broadcast_ws({
+            "type": "DIAGNOSTIC_LOG",
+            "isError": True,
+            "text": f"[{pid}] Shot #{idx} Failed: {item['error']}"
+        })
 
-    let parsedInner = looksLikeJson(innerStr) ? JSON.parse(innerStr) : innerStr;
-    parsedInner = transformNode(parsedInner, '');
 
-    if (!replaced) {
-      let bestPath = null, bestLen = 0;
-      function scanLongest(node, path) {
-        if (typeof node === 'string') {
-          if (looksLikeJson(node)) {
-            try { scanLongest(JSON.parse(node), path.concat(['__JSON__'])); return; } catch (e) {}
-          }
-          const isUrl = node.startsWith('http') || node.startsWith('/') || node.startsWith('data:');
-          const isId = /^(models\/|gemini-|imagen-|projects\/|[a-f0-9-]{20,})/i.test(node);
-          if (!isUrl && !isId && node.includes(' ') && node.length > bestLen) {
-            bestLen = node.length;
-            bestPath = path;
-          }
-        } else if (Array.isArray(node)) node.forEach((c, idx) => scanLongest(c, path.concat([idx])));
-        else if (node && typeof node === 'object') Object.entries(node).forEach(([k, v]) => scanLongest(v, path.concat([k])));
-      }
-      scanLongest(parsedInner, []);
-      if (bestPath) {
-        function setAtPath(node, path, idx = 0) {
-          const seg = path[idx];
-          if (seg === '__JSON__') return JSON.stringify(setAtPath(JSON.parse(node), path, idx + 1));
-          if (idx === path.length - 1) { node[seg] = newPrompt; return node; }
-          node[seg] = setAtPath(node[seg], path, idx + 1);
-          return node;
-        }
-        parsedInner = setAtPath(parsedInner, bestPath);
-      }
-    }
+# ================= Gemini Canvas Worker (bulkgem.py Proven Logic + Live Streaming) =================
+async def _find_canvas_frame(page: Page, timeout_sec: int = 75) -> Frame:
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        for frame in page.frames:
+            try:
+                if await frame.locator("#prompts").count() > 0:
+                    return frame
+                if await frame.locator("textarea").count() > 0 and await frame.locator("button").count() > 0:
+                    url_l = (frame.url or "").lower()
+                    if url_l and "about:blank" not in url_l:
+                        return frame
+            except Exception:
+                continue
+        await asyncio.sleep(1.5)
+    signed_out = await page.get_by_role("link", name="Sign in").count() > 0
+    if signed_out:
+        raise RuntimeError("Profile signed out of Google. Open Login for this account and sign in once.")
+    raise RuntimeError("Gemini Canvas app frame did not render within timeout.")
 
-    outer[0][1] = typeof parsedInner === 'string' ? parsedInner : JSON.stringify(parsedInner);
-    params.set('f.req', JSON.stringify(outer));
-    const wiz = window.WIZ_global_data || {};
-    if (wiz.SNlM0e) params.set('at', wiz.SNlM0e);
-    return params.toString();
-  }
 
-  function buildUrl(tplUrl) {
-    const u = new URL(tplUrl, location.origin);
-    reqCounter += 100000;
-    u.searchParams.set('_reqid', String(reqCounter));
-    const wiz = window.WIZ_global_data || {};
-    if (wiz.cfb2h) u.searchParams.set('bl', wiz.cfb2h);
-    if (wiz.FdrFJe) u.searchParams.set('f.sid', wiz.FdrFJe);
-    return u.toString();
-  }
+async def _dismiss_canvas_gates(page: Page):
+    for label in ("Continue", "Got it"):
+        try:
+            btn = page.get_by_role("button", name=label, exact=True)
+            if await btn.count() > 0:
+                await btn.first.click(force=True, timeout=4000)
+                await asyncio.sleep(1.5)
+                break
+        except Exception:
+            pass
+    try:
+        banner = page.get_by_text("You need to sign in with your Google Account", exact=False)
+        if await banner.count() > 0:
+            close_btn = page.locator("button[aria-label='Close']").first
+            if await close_btn.count() > 0:
+                await close_btn.click(timeout=2500)
+    except Exception:
+        pass
 
-  function extractImage(rawText) {
-    const cleaned = rawText.replace(/^\)\]\}'\s*/, '');
-    let foundPayload = null, rpcErr = null;
-    for (const line of cleaned.split('\n')) {
-      const t = line.trim();
-      if (!t.startsWith('[')) continue;
-      try {
-        const arr = JSON.parse(t);
-        if (Array.isArray(arr)) {
-          for (const e of arr) {
-            if (Array.isArray(e) && e[0] === 'wrb.fr' && e[1] === 'q4uTj') {
-              if (e[2]) foundPayload = e[2];
-              else if (e[5]) rpcErr = JSON.stringify(e[5]);
+
+async def _read_canvas_prompt_count(frame: Frame) -> Optional[int]:
+    try:
+        counter = frame.locator("#prompt-count")
+        if await counter.count() > 0:
+            txt = await counter.inner_text()
+            m = re.search(r"(\d[\d,]*)\s*prompts?\b", txt or "", re.I)
+            if m:
+                return int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+    try:
+        hits = await frame.evaluate("""() => {
+            const out = [];
+            for (const el of document.querySelectorAll('*')) {
+                if (el.children.length) continue;
+                const t = (el.textContent || '').trim();
+                if (/^\\d[\\d,]*\\s*prompts?$/i.test(t)) out.push(t);
             }
-          }
-        }
-      } catch (e) {}
-    }
-    if (!foundPayload) throw new Error(rpcErr ? `RPC ${rpcErr}` : `No q4uTj payload: ${cleaned.slice(0, 120)}`);
-
-    let img = null, mime = 'image/png', apiErr = null;
-    function walk(node) {
-      if (img) return;
-      if (typeof node === 'string') {
-        if (looksLikeJson(node)) { try { walk(JSON.parse(node)); return; } catch (e) {} }
-        if (node.startsWith('data:image/')) { img = node; return; }
-        if (node.length > 1000) {
-          if (node.startsWith('iVBORw0KGgo')) { img = `data:image/png;base64,${node}`; return; }
-          if (node.startsWith('/9j/')) { img = `data:image/jpeg;base64,${node}`; return; }
-          if (node.startsWith('UklGR')) { img = `data:image/webp;base64,${node}`; return; }
-        }
-        if (node.startsWith('https://') && node.includes('googleusercontent.com') && !node.includes('avatar')) {
-          img = node; return;
-        }
-        return;
-      }
-      if (Array.isArray(node)) { node.forEach(walk); return; }
-      if (node && typeof node === 'object') {
-        if (node.error && node.error.message) apiErr = node.error.message;
-        if (node.bytesBase64Encoded) { img = `data:${node.mimeType || mime};base64,${node.bytesBase64Encoded}`; return; }
-        if (node.inlineData && node.inlineData.data) { img = `data:${node.inlineData.mimeType || mime};base64,${node.inlineData.data}`; return; }
-        if (node.encodedImage) { img = node.encodedImage.startsWith('data:') ? node.encodedImage : `data:image/png;base64,${node.encodedImage}`; return; }
-        if (node.mimeType && String(node.mimeType).startsWith('image/')) mime = node.mimeType;
-        Object.values(node).forEach(walk);
-      }
-    }
-    walk(foundPayload);
-    if (!img) throw new Error(apiErr || `No image found: ${String(foundPayload).slice(0, 120)}`);
-    return img;
-  }
-
-  let idx = 0;
-  const concurrency = Math.min(10, items.length);
-  async function worker() {
-    while (true) {
-      const i = idx++;
-      if (i >= items.length) break;
-      const item = items[i];
-      let done = false, status = 0, errMsg = '';
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const resp = await fetch(buildUrl(rawUrl), {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-              'X-Same-Domain': '1'
-            },
-            body: cloneAndPatchBody(rawBody, promptHint, item.prompt, item.aspectRatio || '1:1')
-          });
-          status = resp.status;
-          const txt = await resp.text();
-          if (!resp.ok) {
-            errMsg = `HTTP ${resp.status}: ${txt.replace(/\s+/g, ' ').slice(0, 150)}`;
-            if (resp.status === 429 || resp.status >= 500) { await new Promise(r => setTimeout(r, 800 * attempt)); continue; }
-            break;
-          }
-          const dataUrl = extractImage(txt);
-          results.push({ index: item.index, ok: true, httpStatus: status, dataUrl });
-          if (window.__rxOnShotDone) window.__rxOnShotDone({ index: item.index, ok: true, httpStatus: status, dataUrl });
-          done = true;
-          break;
-        } catch (e) {
-          errMsg = `HTTP ${status || 'ERR'}: ${e.message}`;
-          if (attempt < 3) await new Promise(r => setTimeout(r, 600 * attempt));
-        }
-      }
-      if (!done) {
-        const failObj = { index: item.index, ok: false, httpStatus: status, error: errMsg };
-        results.push(failObj);
-        if (window.__rxOnShotDone) window.__rxOnShotDone(failObj);
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return results;
-}
-"""
+            return out;
+        }""")
+        if hits:
+            m = re.search(r"(\d[\d,]*)\s*prompts?\b", hits[-1], re.I)
+            if m:
+                return int(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+    return None
 
 
+async def run_canvas_profile_worker(
+    profile: Dict[str, Any],
+    assigned_items: List[Dict[str, Any]],
+    item_map: Dict[int, Dict[str, Any]],
+    batch_dir: Path,
+    options: Optional[Dict[str, Any]] = None,
+):
+    pid = profile["id"]
+    options = options or {}
+    async with get_profile_lock(pid):
+        ctx = await get_or_open_worker_context(pid)
+        page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+
+        try:
+            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Opening Gemini Canvas in background Chrome..."})
+            await page.goto(GEMINI_SHARE_URL, wait_until="domcontentloaded", timeout=90000)
+            await asyncio.sleep(3.0)
+            await _dismiss_canvas_gates(page)
+
+            frame = await _find_canvas_frame(page, timeout_sec=75)
+            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Gemini Canvas app ready! Preparing {len(assigned_items)} shot(s)..."})
+
+            # Group by aspect ratio while preserving order (typically all shots share one aspect ratio)
+            groups: List[Tuple[str, List[Dict[str, Any]]]] = []
+            for it in assigned_items:
+                ar = it.get("aspectRatio", "1:1")
+                if not groups or groups[-1][0] != ar:
+                    groups.append((ar, [it]))
+                else:
+                    groups[-1][1].append(it)
+
+            for group_idx, (ar, group_items) in enumerate(groups):
+                if state.should_stop:
+                    break
+                if group_idx > 0:
+                    await page.goto(GEMINI_SHARE_URL, wait_until="domcontentloaded", timeout=90000)
+                    await asyncio.sleep(2.5)
+                    await _dismiss_canvas_gates(page)
+                    frame = await _find_canvas_frame(page, timeout_sec=60)
+
+                # Switch to Image Generator tab
+                tab_btn = frame.locator("button[data-tab='image']")
+                if await tab_btn.count() > 0:
+                    await tab_btn.first.click()
+                    await asyncio.sleep(0.4)
+
+                # Set Aspect Ratio
+                ar_map = {"16:9": "landscape", "9:16": "portrait", "1:1": "square"}
+                ar_val = ar_map.get(ar, "square")
+                ar_sel = frame.locator("#aspectRatio")
+                if await ar_sel.count() > 0:
+                    try:
+                        await ar_sel.select_option(value=ar_val)
+                    except Exception:
+                        pass
+
+                # Optional Character Consistency image reference
+                char_ref_b64 = options.get("charImageBase64") or ""
+                if char_ref_b64 and "," in char_ref_b64:
+                    try:
+                        cc_toggle = frame.locator("#ccToggle")
+                        if await cc_toggle.count() > 0 and not await cc_toggle.is_checked():
+                            await cc_toggle.evaluate("""(el) => {
+                                el.checked = true;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                            }""")
+                            await asyncio.sleep(0.6)
+                        fd, tmp_img = tempfile.mkstemp(prefix="rx_char_", suffix=".png")
+                        os.close(fd)
+                        Path(tmp_img).write_bytes(base64.b64decode(char_ref_b64.split(",", 1)[1]))
+                        await frame.locator("input.cc-image-input").first.set_input_files(tmp_img)
+                        await asyncio.sleep(0.8)
+                        try:
+                            os.remove(tmp_img)
+                        except OSError:
+                            pass
+                    except Exception as cc_err:
+                        await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Char ref note: {cc_err}"})
+
+                # Fill prompts cleanly (1 line per prompt) and verify counter matches!
+                clean_prompts = [sanitize_prompt(it["fullPrompt"]) for it in group_items]
+                joined_text = "\n".join(clean_prompts)
+                prompt_box = frame.locator("#prompts")
+                if await prompt_box.count() == 0:
+                    prompt_box = frame.locator("textarea").last
+
+                for attempt in range(3):
+                    await prompt_box.click()
+                    await prompt_box.fill("")
+                    await asyncio.sleep(0.3)
+                    await prompt_box.fill(joined_text)
+                    await asyncio.sleep(1.2)
+                    parsed_cnt = await _read_canvas_prompt_count(frame)
+                    if parsed_cnt is None or parsed_cnt == len(group_items):
+                        break
+
+                for it in group_items:
+                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+
+                gen_btn = frame.locator("#generate-btn")
+                if await gen_btn.count() == 0:
+                    gen_btn = frame.get_by_role("button", name=re.compile("generate images", re.I)).first
+                await gen_btn.click()
+                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Canvas batch started ({len(group_items)} prompts) — streaming live..."})
+
+                # Live poll #image-grid tiles as Gemini Canvas completes each prompt concurrently
+                done_slots = set()
+                max_wait_sec = max(240, len(group_items) * 20)
+                start_ts = time.time()
+                started_generating = False
+
+                while time.time() - start_ts < max_wait_sec and not state.should_stop:
+                    await asyncio.sleep(1.3)
+
+                    try:
+                        stop_vis = await frame.locator("#stop-btn").is_visible()
+                    except Exception:
+                        stop_vis = False
+                    if stop_vis:
+                        started_generating = True
+
+                    # Extract any newly completed rendered images from #image-grid in exact card order
+                    extracted = await frame.evaluate("""async (alreadyDone) => {
+                        const grid = document.querySelector('#image-grid');
+                        if (!grid) return { tiles: [], totalCards: 0 };
+                        const cards = Array.from(grid.children);
+                        const out = [];
+                        for (let i = 0; i < cards.length; i++) {
+                            if (alreadyDone.includes(i)) continue;
+                            const img = cards[i].querySelector('img');
+                            if (img && img.src && img.complete && (img.naturalWidth > 64 || img.width > 64)) {
+                                try {
+                                    const r = await fetch(img.src);
+                                    const b = await r.blob();
+                                    const b64 = await new Promise((res) => {
+                                        const fr = new FileReader();
+                                        fr.onloadend = () => res(fr.result);
+                                        fr.readAsDataURL(b);
+                                    });
+                                    out.push({ slot: i, ok: true, dataUrl: b64 });
+                                } catch (e) {
+                                    try {
+                                        const c = document.createElement('canvas');
+                                        c.width = img.naturalWidth || 1024;
+                                        c.height = img.naturalHeight || 1024;
+                                        c.getContext('2d').drawImage(img, 0, 0);
+                                        out.push({ slot: i, ok: true, dataUrl: c.toDataURL('image/png') });
+                                    } catch (e2) {}
+                                }
+                            }
+                        }
+                        return { tiles: out, totalCards: cards.length };
+                    }""", list(done_slots))
+
+                    for tile in extracted.get("tiles", []):
+                        slot = tile["slot"]
+                        if slot < len(group_items) and slot not in done_slots:
+                            done_slots.add(slot)
+                            it = group_items[slot]
+                            await handle_shot_result(
+                                pid,
+                                {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": tile["dataUrl"]},
+                                item_map,
+                                batch_dir,
+                                "image",
+                            )
+
+                    if len(done_slots) >= len(group_items):
+                        break
+
+                    # If Stop button appeared and then disappeared, Canvas finished rendering
+                    if started_generating and not stop_vis:
+                        # Give 2s grace for final tile image load
+                        await asyncio.sleep(2.0)
+                        break
+
+                # Mark any unrendered tiles after Canvas finishes
+                for slot, it in enumerate(group_items):
+                    if it.get("status") not in ("done", "failed"):
+                        await handle_shot_result(
+                            pid,
+                            {"index": it["index"], "ok": False, "httpStatus": 0, "error": "Shot failed or refused by Gemini Canvas"},
+                            item_map,
+                            batch_dir,
+                            "image",
+                        )
+
+        except Exception as err:
+            for it in assigned_items:
+                if it.get("status") not in ("done", "failed"):
+                    await handle_shot_result(
+                        pid,
+                        {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(err)},
+                        item_map,
+                        batch_dir,
+                        "image",
+                    )
+
+
+# ================= Google Flow Worker (RenderX Pro Flow + Concurrent Fallback) =================
 FLOW_EVAL_BATCH_JS = r"""
 async ({ items, template }) => {
   const results = [];
   const rawUrl = template.url;
   const rawBody = template.body;
   const rawHeaders = template.headers || {};
-  const promptHint = template.promptHint || '';
-  const siteKey = template.siteKey || '';
 
   const FORBIDDEN = new Set(['content-length', 'host', 'origin', 'referer', 'cookie', 'user-agent', 'accept-encoding', 'connection', 'priority']);
   const safeHeaders = { 'Content-Type': 'application/json' };
@@ -431,7 +882,6 @@ async ({ items, template }) => {
   }
 
   function findSiteKey() {
-    if (siteKey) return siteKey;
     for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
       const m = (s.src || '').match(/[?&]render=([^&]+)/);
       if (m && m[1] && m[1] !== 'explicit') return m[1];
@@ -488,14 +938,14 @@ async ({ items, template }) => {
   }
 
   let idx = 0;
-  const concurrency = Math.min(8, items.length);
+  const concurrency = Math.min(6, items.length);
   async function worker() {
     while (true) {
       const i = idx++;
       if (i >= items.length) break;
       const item = items[i];
       let done = false, status = 0, errMsg = '';
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           const tok = await getRecaptcha();
           const resp = await fetch(rawUrl, {
@@ -507,8 +957,8 @@ async ({ items, template }) => {
           status = resp.status;
           const txt = await resp.text();
           if (!resp.ok) {
-            errMsg = `HTTP ${resp.status}: ${txt.replace(/\s+/g, ' ').slice(0, 150)}`;
-            if (resp.status === 429 || resp.status >= 500) { await new Promise(r => setTimeout(r, 800 * attempt)); continue; }
+            errMsg = `HTTP ${resp.status}: ${txt.replace(/\s+/g, ' ').slice(0, 140)}`;
+            if (resp.status === 429 || resp.status >= 500) { await new Promise(r => setTimeout(r, 900 * attempt)); continue; }
             break;
           }
           const media = extractMedia(JSON.parse(txt));
@@ -520,7 +970,7 @@ async ({ items, template }) => {
           break;
         } catch (e) {
           errMsg = `HTTP ${status || 'ERR'}: ${e.message}`;
-          if (attempt < 3) await new Promise(r => setTimeout(r, 600 * attempt));
+          if (attempt < 2) await new Promise(r => setTimeout(r, 700));
         }
       }
       if (!done) {
@@ -536,266 +986,251 @@ async ({ items, template }) => {
 """
 
 
-async def handle_shot_result(pid: str, res: Dict[str, Any], item_map: Dict[int, Dict[str, Any]], batch_dir: Path, sub_mode: str):
-    idx = res["index"]
-    item = item_map.get(idx)
-    if not item or item.get("status") == "done":
-        return
-
-    if res.get("ok") and res.get("dataUrl"):
-        data_url = res["dataUrl"]
-        # If fifeUrl / https URL, fetch inside Playwright or Python? Convert if http
-        if data_url.startswith("https://"):
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as sess:
-                    async with sess.get(data_url) as r:
-                        if r.status == 200:
-                            raw_bytes = await r.read()
-                            ct = r.headers.get("content-type", "image/png").split(";")[0]
-                            data_url = f"data:{ct};base64,{base64.b64encode(raw_bytes).decode('ascii')}"
-            except Exception:
-                pass
-
-        item["dataUrl"] = data_url
-        item["status"] = "done"
-        fn = item.get("filename") or f"{idx:02d}.png"
-        save_data_url_to_disk(data_url, batch_dir / fn)
-
-        completed = sum(1 for x in state.current_items if x.get("status") == "done")
-        await broadcast_ws({
-            "type": "ITEM_COMPLETED",
-            "index": idx,
-            "profileId": pid,
-            "httpStatus": res.get("httpStatus", 200),
-            "mediaType": "video" if "video" in sub_mode else "image",
-            "dataUrl": data_url,
-            "completedCount": completed,
-            "total": len(state.current_items),
-        })
-        await broadcast_ws({
-            "type": "DIAGNOSTIC_LOG",
-            "text": f"[{pid}] Shot #{idx}: HTTP {res.get('httpStatus', 200)} OK ({completed}/{len(state.current_items)})"
-        })
-    else:
-        item["status"] = "failed"
-        item["error"] = res.get("error", "Unknown error")
-        await broadcast_ws({
-            "type": "ITEM_FAILED",
-            "index": idx,
-            "profileId": pid,
-            "httpStatus": res.get("httpStatus", 0),
-            "error": f"[{pid}] {item['error']}"
-        })
-        await broadcast_ws({
-            "type": "DIAGNOSTIC_LOG",
-            "isError": True,
-            "text": f"[{pid}] Shot #{idx} Failed: {item['error']}"
-        })
-
-
-async def run_canvas_profile_worker(profile: Dict[str, Any], assigned_items: List[Dict[str, Any]], item_map: Dict[int, Dict[str, Any]], batch_dir: Path):
-    pid = profile["id"]
-    async with get_profile_lock(pid):
-        ctx = await get_or_open_worker_context(pid)
-        page: Page = await ctx.new_page()
-
-        captured = profile.get("canvas_template") or None
-
-        def on_request(req):
-            nonlocal captured
-            if "batchexecute" in req.url and "q4uTj" in req.url and req.method == "POST":
-                pd = req.post_data or ""
-                if "f.req=" in pd:
-                    captured = {
-                        "url": req.url,
-                        "body": pd,
-                        "promptHint": captured.get("promptHint", "") if captured else "",
-                    }
-
-        page.on("request", on_request)
-
+async def _flow_dismiss_banners(page: Page):
+    for name in ("Dismiss", "close Dismiss", "Close", "Got it", "I agree"):
         try:
-            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Connecting to Gemini Canvas session..."})
-            await page.goto(GEMINI_SHARE_URL, wait_until="domcontentloaded", timeout=35000)
-
-            # Expose streaming callback back to Python
-            async def on_shot_done(res):
-                await handle_shot_result(pid, res, item_map, batch_dir, "image")
-
-            await page.expose_function("__rxOnShotDone", on_shot_done)
-
-            remaining = list(assigned_items)
-
-            # Step 1: If no captured template for this profile yet, execute Shot #1 via the Canvas iframe to capture q4uTj raw payload!
-            if not captured or not captured.get("body"):
-                first = remaining.pop(0)
-                await broadcast_ws({"type": "ITEM_STARTED", "index": first["index"]})
-                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Syncing q4uTj via Shot #{first['index']}..."})
-
-                iframe_el = page.locator('iframe[title="Preview"]')
-                await iframe_el.wait_for(state="attached", timeout=25000)
-                frame = page.frame_locator('iframe[title="Preview"]')
-                await frame.locator('#prompts').wait_for(state="visible", timeout=20000)
-
-                ar_val = "landscape" if first.get("aspectRatio") == "16:9" else ("portrait" if first.get("aspectRatio") == "9:16" else "square")
-                await frame.locator('#aspectRatio').select_option(ar_val)
-                clean_p = sanitize_prompt(first["fullPrompt"])
-                captured = {"promptHint": clean_p}
-                await frame.locator('#prompts').fill(clean_p)
-                await frame.locator('#generate-btn').click()
-
-                # Wait for first generated blob image in #image-grid
-                img_loc = frame.locator('#image-grid img').first
-                await img_loc.wait_for(state="visible", timeout=35000)
-                src = await img_loc.get_attribute("src")
-                data_url = await frame.locator('#image-grid img').first.evaluate(
-                    """async (img) => {
-                        const r = await fetch(img.src);
-                        const b = await r.blob();
-                        return await new Promise((res) => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
-                    }"""
-                )
-                await handle_shot_result(pid, {"index": first["index"], "ok": True, "httpStatus": 200, "dataUrl": data_url}, item_map, batch_dir, "image")
-
-                if captured and captured.get("url") and captured.get("body"):
-                    profiles = load_profiles()
-                    for p in profiles:
-                        if p["id"] == pid:
-                            p["canvas_template"] = captured
-                            p["canvas_ready"] = True
-                    save_profiles(profiles)
-                    await broadcast_ws({"type": "PROFILES_UPDATED"})
-
-            # Step 2: Execute all remaining assigned items concurrently via 10-way fetch() inside page MAIN world!
-            if remaining and not state.should_stop:
-                if not captured or not captured.get("url") or not captured.get("body"):
-                    raise RuntimeError("Could not capture q4uTj request template on this profile.")
-                for it in remaining:
-                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-
-                eval_items = [
-                    {"index": it["index"], "prompt": sanitize_prompt(it["fullPrompt"]), "aspectRatio": it.get("aspectRatio", "1:1")}
-                    for it in remaining
-                ]
-                await page.evaluate(CANVAS_EVAL_BATCH_JS, {"items": eval_items, "template": captured})
-
-        except Exception as err:
-            for it in assigned_items:
-                if it.get("status") not in ("done", "failed"):
-                    await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(err)}, item_map, batch_dir, "image")
-        finally:
-            try:
-                await page.close()
-            except Exception:
-                pass
+            btn = page.get_by_role("button", name=name)
+            if await btn.count() > 0:
+                await btn.first.click(timeout=2500)
+                await asyncio.sleep(0.5)
+        except Exception:
+            pass
 
 
-async def run_flow_profile_worker(profile: Dict[str, Any], assigned_items: List[Dict[str, Any]], item_map: Dict[int, Dict[str, Any]], sub_mode: str, batch_dir: Path):
+async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 90) -> str:
+    clean_p = sanitize_prompt(item["fullPrompt"])
+    is_video = "video" in sub_mode
+
+    # Select Image vs Video mode if available
+    try:
+        mode_name = "Videos" if is_video else "Images"
+        for cand in (mode_name, "Video" if is_video else "Image"):
+            mbtn = page.get_by_role("button", name=cand, exact=True)
+            if await mbtn.count() > 0 and await mbtn.first.is_visible():
+                await mbtn.first.click()
+                await asyncio.sleep(0.4)
+                break
+    except Exception:
+        pass
+
+    # If image-to-video & reference image provided, upload to Flow
+    ref_b64 = item.get("referenceImage") or ""
+    if is_video and ref_b64 and "," in ref_b64:
+        try:
+            add_btn = page.get_by_role("button", name=re.compile("Add Media|Add|Upload", re.I)).first
+            if await add_btn.count() > 0 and await add_btn.is_visible():
+                await add_btn.click()
+                await asyncio.sleep(0.8)
+            file_inp = page.locator("input[type=file]").first
+            if await file_inp.count() > 0:
+                fd, tmp_ref = tempfile.mkstemp(prefix="rx_flow_", suffix=".png")
+                os.close(fd)
+                Path(tmp_ref).write_bytes(base64.b64decode(ref_b64.split(",", 1)[1]))
+                await file_inp.set_input_files(tmp_ref)
+                await asyncio.sleep(1.5)
+                await _flow_dismiss_banners(page)
+                try:
+                    os.remove(tmp_ref)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+    media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
+    before_srcs = set(
+        await page.evaluate(
+            f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)"
+        )
+    )
+
+    compose = page.locator('textarea, [contenteditable="true"]').last
+    await compose.wait_for(state="visible", timeout=25000)
+    await compose.click()
+    try:
+        await compose.fill(clean_p)
+    except Exception:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.type(clean_p)
+    await asyncio.sleep(0.4)
+
+    # Click Create/Generate button or press Enter
+    create_btn = page.locator('button[aria-label*="Create"], button[aria-label*="Generate"], button:has-text("Create"), button:has-text("Generate")').last
+    if await create_btn.count() > 0 and await create_btn.first.is_visible():
+        await create_btn.first.click()
+    else:
+        await compose.press("Enter")
+
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline and not state.should_stop:
+        await asyncio.sleep(1.5)
+        await _flow_dismiss_banners(page)
+        now_items = await page.evaluate(f"""async () => {{
+            const els = Array.from(document.querySelectorAll('{media_sel}'));
+            return els.map(el => ({{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200 }}));
+        }}""")
+        for entry in reversed(now_items):
+            src = entry.get("src", "")
+            if not src or src in before_srcs:
+                continue
+            if entry.get("tag") == "IMG" and entry.get("w", 0) < 64:
+                continue
+            if src.startswith("blob:"):
+                b64 = await page.evaluate("""async (s) => {
+                    const r = await fetch(s);
+                    const b = await r.blob();
+                    return await new Promise(res => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
+                }""", src)
+                return b64
+            return src
+
+    raise RuntimeError("Timed out waiting for Google Flow render")
+
+
+async def run_flow_profile_worker(
+    profile: Dict[str, Any],
+    assigned_items: List[Dict[str, Any]],
+    item_map: Dict[int, Dict[str, Any]],
+    sub_mode: str,
+    batch_dir: Path,
+):
     pid = profile["id"]
     async with get_profile_lock(pid):
         ctx = await get_or_open_worker_context(pid)
-        page: Page = await ctx.new_page()
+        page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-        captured = profile.get("flow_template") or {}
+        captured: Dict[str, Any] = {}
 
         def on_request(req):
-            nonlocal captured
             if "aisandbox-pa.googleapis.com" in req.url:
                 hdrs = dict(req.headers)
                 is_gen = any(k in req.url for k in ("batchGenerateImages", "runImageFx", "flowMedia", "batchGenerateVideo"))
                 if is_gen and req.post_data:
-                    captured = {
-                        "url": req.url,
-                        "headers": hdrs,
-                        "body": req.post_data,
-                        "promptHint": captured.get("promptHint", ""),
-                    }
+                    captured["url"] = req.url
+                    captured["headers"] = hdrs
+                    captured["body"] = req.post_data
                 elif hdrs.get("authorization"):
                     captured["headers"] = {**captured.get("headers", {}), **hdrs}
 
         page.on("request", on_request)
 
         try:
-            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Connecting to Google Flow session..."})
-            await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=35000)
-            await asyncio.sleep(2.5)
+            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Opening Google Flow in background Chrome..."})
+            await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=90000)
+            await asyncio.sleep(3.5)
+            await _flow_dismiss_banners(page)
+
+            if "accounts.google.com" in (page.url or "").lower():
+                raise RuntimeError("Profile signed out of Google Flow. Click Login for this profile first.")
+
+            # Enter clean project workspace if on home list
+            try:
+                new_btn = page.get_by_role("button", name="New project").first
+                if await new_btn.count() > 0 and await new_btn.is_visible():
+                    await new_btn.click()
+                    await asyncio.sleep(2.5)
+                    await _flow_dismiss_banners(page)
+            except Exception:
+                pass
 
             async def on_shot_done(res):
                 await handle_shot_result(pid, res, item_map, batch_dir, sub_mode)
 
-            await page.expose_function("__rxOnShotDone", on_shot_done)
+            try:
+                await page.expose_function("__rxOnShotDone", on_shot_done)
+            except Exception:
+                pass
 
             remaining = list(assigned_items)
+            first = remaining.pop(0)
+            await broadcast_ws({"type": "ITEM_STARTED", "index": first["index"]})
+            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Submitting Shot #{first['index']} inside Google Flow..."})
 
-            # Step 1: If Flow payload not captured yet, run Shot #1 in Flow page UI to capture live Bearer + projectId + payload!
-            if not captured.get("url") or not captured.get("body"):
-                first = remaining.pop(0)
-                await broadcast_ws({"type": "ITEM_STARTED", "index": first["index"]})
-                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Syncing Flow Bearer & Project via Shot #{first['index']}..."})
+            first_media = await _flow_submit_ui_shot(page, first, sub_mode, timeout_sec=120)
+            await handle_shot_result(pid, {"index": first["index"], "ok": True, "httpStatus": 200, "dataUrl": first_media}, item_map, batch_dir, sub_mode)
 
-                # Auto-click New project if present
-                new_btn = page.locator('button:has-text("New project"), [role="button"]:has-text("New project")').first
-                if await new_btn.count() > 0 and await new_btn.is_visible():
-                    await new_btn.click()
-                    await asyncio.sleep(2.5)
-
-                textarea = page.locator('textarea').first
-                await textarea.wait_for(state="visible", timeout=20000)
-                clean_p = sanitize_prompt(first["fullPrompt"])
-                captured["promptHint"] = clean_p
-                await textarea.fill(clean_p)
-                await asyncio.sleep(0.3)
-                await textarea.press("Enter")
-
-                # Wait for generated image/video to appear and request template to be intercepted
-                img_loc = page.locator('img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:"]').last
-                await img_loc.wait_for(state="visible", timeout=35000)
-                src = await img_loc.get_attribute("src")
-                await handle_shot_result(pid, {"index": first["index"], "ok": True, "httpStatus": 200, "dataUrl": src}, item_map, batch_dir, sub_mode)
-
-                if captured.get("url") and captured.get("body"):
-                    profiles = load_profiles()
-                    for p in profiles:
-                        if p["id"] == pid:
-                            p["flow_template"] = captured
-                            p["flow_ready"] = True
-                    save_profiles(profiles)
-                    await broadcast_ws({"type": "PROFILES_UPDATED"})
-
+            # Fast parallel API replay if live Bearer + payload was captured; fallback to Flow UI per-shot otherwise
             if remaining and not state.should_stop:
-                if not captured.get("url") or not captured.get("body"):
-                    raise RuntimeError("Google Flow auth/payload not captured. Please login to this Chrome profile first.")
-                for it in remaining:
-                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-
-                eval_items = [
-                    {"index": it["index"], "prompt": sanitize_prompt(it["fullPrompt"]), "aspectRatio": it.get("aspectRatio", "1:1")}
-                    for it in remaining
-                ]
-                await page.evaluate(FLOW_EVAL_BATCH_JS, {"items": eval_items, "template": captured})
+                if captured.get("url") and captured.get("body") and "video" not in sub_mode:
+                    for it in remaining:
+                        await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+                    eval_items = [
+                        {"index": it["index"], "prompt": sanitize_prompt(it["fullPrompt"]), "aspectRatio": it.get("aspectRatio", "1:1")}
+                        for it in remaining
+                    ]
+                    api_results = await page.evaluate(FLOW_EVAL_BATCH_JS, {"items": eval_items, "template": captured})
+                    failed_fallback = [it for it in remaining if not any(r.get("index") == it["index"] and r.get("ok") for r in api_results)]
+                    # Fallback sequentially in Flow UI for any shot blocked by reCAPTCHA/API check
+                    for it in failed_fallback:
+                        if state.should_stop or it.get("status") == "done":
+                            continue
+                        it["status"] = "generating"
+                        try:
+                            m = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
+                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": m}, item_map, batch_dir, sub_mode)
+                        except Exception as e2:
+                            await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(e2)}, item_map, batch_dir, sub_mode)
+                else:
+                    for it in remaining:
+                        if state.should_stop:
+                            break
+                        await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+                        try:
+                            m = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
+                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": m}, item_map, batch_dir, sub_mode)
+                        except Exception as e2:
+                            await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(e2)}, item_map, batch_dir, sub_mode)
 
         except Exception as err:
             for it in assigned_items:
                 if it.get("status") not in ("done", "failed"):
                     await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(err)}, item_map, batch_dir, sub_mode)
-        finally:
-            try:
-                await page.close()
-            except Exception:
-                pass
+
+
+# ================= Background Login Watcher =================
+async def _watch_real_chrome_login(pid: str):
+    state.login_open_pids.add(pid)
+    await broadcast_ws({"type": "PROFILES_UPDATED"})
+    p_path = PROFILES_DIR / pid
+    try:
+        for _ in range(180):  # up to 6 minutes watching while user signs in
+            await asyncio.sleep(2.0)
+            lstate = await asyncio.to_thread(profile_login_state, p_path)
+            pids = await asyncio.to_thread(get_chrome_pids_for_dir, p_path)
+
+            profs = load_profiles(refresh_disk=False)
+            changed = False
+            for p in profs:
+                if p["id"] == pid:
+                    if lstate["logged_in"] != bool(p.get("logged_in")) or lstate["email"] != (p.get("email") or ""):
+                        p["logged_in"] = lstate["logged_in"]
+                        p["email"] = lstate["email"]
+                        p["status"] = lstate["status"]
+                        if lstate["logged_in"]:
+                            p["enabled"] = True
+                        changed = True
+            if changed:
+                save_profiles(profs)
+                await broadcast_ws({"type": "PROFILES_UPDATED"})
+
+            if not pids and len(state.login_open_pids) > 0:
+                # Chrome window closed by user
+                break
+    finally:
+        state.login_open_pids.discard(pid)
+        load_profiles(refresh_disk=True)
+        await broadcast_ws({"type": "PROFILES_UPDATED"})
 
 
 # ================= FastAPI Lifecycle & Endpoints =================
 @app.on_event("startup")
 async def on_startup():
     state.pw = await async_playwright().start()
-    load_profiles()
+    load_profiles(refresh_disk=True)
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    for ctx in list(state.login_contexts.values()) + list(state.worker_contexts.values()):
+    for ctx in list(state.worker_contexts.values()):
         try:
             await ctx.close()
         except Exception:
@@ -811,38 +1246,48 @@ async def serve_root():
 
 @app.get("/api/status")
 async def api_status():
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=True)
+    pro_dir = _find_pro_profiles_dir()
+    pro_count = len([d for d in pro_dir.iterdir() if d.is_dir() and profile_login_state(d)["logged_in"]]) if pro_dir else 0
     return {
         "success": True,
         "desktopMode": True,
         "isQueueRunning": state.is_running,
         "chromeFound": bool(CHROME_EXE),
         "outputDir": str(state.last_batch_dir),
+        "proImportCount": pro_count,
         "profiles": [public_profile_view(p) for p in profiles],
     }
 
 
 @app.get("/api/profiles")
 async def api_list_profiles():
-    return {"success": True, "profiles": [public_profile_view(p) for p in load_profiles()]}
+    profiles = load_profiles(refresh_disk=True)
+    pro_dir = _find_pro_profiles_dir()
+    pro_count = len([d for d in pro_dir.iterdir() if d.is_dir() and profile_login_state(d)["logged_in"]]) if pro_dir else 0
+    return {
+        "success": True,
+        "proImportCount": pro_count,
+        "profiles": [public_profile_view(p) for p in profiles],
+    }
 
 
 @app.post("/api/profiles")
 async def api_add_profile():
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=False)
     next_num = len(profiles) + 1
-    pid = f"profile_{next_num:02d}"
+    pid = f"acc{next_num}"
+    while (PROFILES_DIR / pid).exists() and any(p["id"] == pid for p in profiles):
+        next_num += 1
+        pid = f"acc{next_num}"
     (PROFILES_DIR / pid).mkdir(parents=True, exist_ok=True)
     new_prof = {
         "id": pid,
-        "name": f"Chrome Profile {next_num:02d}",
+        "name": f"Account {next_num} ({pid})",
         "email": "",
         "enabled": True,
         "logged_in": False,
-        "canvas_ready": False,
-        "flow_ready": False,
-        "canvas_template": None,
-        "flow_template": None,
+        "status": "Not signed in — Click Login",
     }
     profiles.append(new_prof)
     save_profiles(profiles)
@@ -856,12 +1301,11 @@ class LoginReq(BaseModel):
 
 @app.post("/api/profiles/{pid}/login")
 async def api_login_profile(pid: str, req: LoginReq):
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=False)
     target = next((p for p in profiles if p["id"] == pid), None)
     if not target:
         raise HTTPException(404, "Profile not found")
 
-    # Close headless worker on this profile if open before opening visible window
     if pid in state.worker_contexts:
         try:
             await state.worker_contexts[pid].close()
@@ -869,93 +1313,132 @@ async def api_login_profile(pid: str, req: LoginReq):
             pass
         state.worker_contexts.pop(pid, None)
 
-    if pid in state.login_contexts:
-        ctx = state.login_contexts[pid]
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-        await page.bring_to_front()
-        return {"success": True, "message": "Login Chrome window already open"}
+    p_path = PROFILES_DIR / pid
+    await asyncio.to_thread(kill_stale_chrome, p_path)
+    ok, msg = await asyncio.to_thread(open_real_chrome_for_login, pid, req.engine)
+    if not ok:
+        raise HTTPException(500, msg)
 
-    ctx = await launch_chrome_context(pid, headless=False)
-    state.login_contexts[pid] = ctx
+    asyncio.create_task(_watch_real_chrome_login(pid))
+    return {"success": True, "message": msg}
 
-    def on_close(_):
-        state.login_contexts.pop(pid, None)
-        asyncio.create_task(broadcast_ws({"type": "PROFILES_UPDATED"}))
 
-    ctx.on("close", on_close)
+@app.post("/api/profiles/open-all")
+async def api_open_all_unlogged(req: LoginReq):
+    profiles = load_profiles(refresh_disk=True)
+    opened = 0
+    for p in profiles:
+        if not p.get("logged_in"):
+            pid = p["id"]
+            if pid in state.worker_contexts:
+                try:
+                    await state.worker_contexts[pid].close()
+                except Exception:
+                    pass
+                state.worker_contexts.pop(pid, None)
+            await asyncio.to_thread(kill_stale_chrome, PROFILES_DIR / pid)
+            ok, _ = await asyncio.to_thread(open_real_chrome_for_login, pid, req.engine)
+            if ok:
+                opened += 1
+                asyncio.create_task(_watch_real_chrome_login(pid))
+                await asyncio.sleep(0.8)
+    return {"success": True, "opened": opened, "message": f"Opened {opened} Chrome window(s) for login"}
 
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-    # Passively capture templates & login cookies while user signs in
-    def on_req(r):
-        if "batchexecute" in r.url and "q4uTj" in r.url and r.post_data:
-            profs = load_profiles()
-            for p in profs:
-                if p["id"] == pid:
-                    p["canvas_template"] = {"url": r.url, "body": r.post_data, "promptHint": ""}
-                    p["canvas_ready"] = True
-            save_profiles(profs)
-        elif "aisandbox-pa.googleapis.com" in r.url:
-            is_gen = any(k in r.url for k in ("batchGenerateImages", "runImageFx", "flowMedia"))
-            profs = load_profiles()
-            for p in profs:
-                if p["id"] == pid:
-                    tpl = p.get("flow_template") or {}
-                    tpl["headers"] = {**tpl.get("headers", {}), **dict(r.headers)}
-                    if is_gen and r.post_data:
-                        tpl["url"] = r.url
-                        tpl["body"] = r.post_data
-                        p["flow_ready"] = True
-                    p["flow_template"] = tpl
-            save_profiles(profs)
+@app.post("/api/profiles/import-pro")
+async def api_import_pro_profiles():
+    pro_dir = _find_pro_profiles_dir()
+    if not pro_dir:
+        return JSONResponse(status_code=404, content={"success": False, "error": "RenderX Studio Pro browser_profiles folder not found"})
 
-    page.on("request", on_req)
+    ignore_dirs = shutil.ignore_patterns("Cache", "Code Cache", "GPUCache", "ShaderCache", "GrShaderCache", "Service Worker", "Crashpad", "lockfile", "Singleton*")
+    imported = []
 
-    async def monitor_cookies():
-        while pid in state.login_contexts:
-            await asyncio.sleep(2.5)
+    def do_copy():
+        profiles = load_profiles(refresh_disk=False)
+        existing_ids = {p["id"] for p in profiles}
+        for src_sub in sorted(pro_dir.iterdir()):
+            if not src_sub.is_dir():
+                continue
+            lstate = profile_login_state(src_sub)
+            if not lstate["logged_in"]:
+                continue
+            pid = src_sub.name
+            dst_sub = PROFILES_DIR / pid
+            kill_stale_chrome(dst_sub)
+            if dst_sub.exists():
+                shutil.rmtree(dst_sub, ignore_errors=True)
+            shutil.copytree(src_sub, dst_sub, ignore=ignore_dirs, dirs_exist_ok=True)
+            new_lstate = profile_login_state(dst_sub)
+            if pid in existing_ids:
+                for p in profiles:
+                    if p["id"] == pid:
+                        p["logged_in"] = new_lstate["logged_in"]
+                        p["email"] = new_lstate["email"]
+                        p["status"] = new_lstate["status"]
+                        p["enabled"] = True
+            else:
+                profiles.append({
+                    "id": pid,
+                    "name": f"Pro {pid}",
+                    "email": new_lstate["email"],
+                    "enabled": True,
+                    "logged_in": new_lstate["logged_in"],
+                    "status": new_lstate["status"],
+                })
+            imported.append(pid)
+        save_profiles(profiles)
+
+    for p in load_profiles(refresh_disk=False):
+        pid = p["id"]
+        if pid in state.worker_contexts:
             try:
-                logged = await detect_google_login(ctx)
-                if logged:
-                    profs = load_profiles()
-                    changed = False
-                    for p in profs:
-                        if p["id"] == pid and not p.get("logged_in"):
-                            p["logged_in"] = True
-                            p["enabled"] = True
-                            changed = True
-                    if changed:
-                        save_profiles(profs)
-                        await broadcast_ws({"type": "PROFILES_UPDATED"})
+                await state.worker_contexts[pid].close()
             except Exception:
-                break
+                pass
+            state.worker_contexts.pop(pid, None)
 
-    asyncio.create_task(monitor_cookies())
-
-    target_url = FLOW_URL if req.engine == "google-flow" else GEMINI_SHARE_URL
-    await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+    await asyncio.to_thread(do_copy)
     await broadcast_ws({"type": "PROFILES_UPDATED"})
-    return {"success": True, "message": f"Opened Chrome login window for {pid}"}
+    return {"success": True, "imported": imported, "message": f"Imported {len(imported)} signed-in profile(s) from RenderX Studio Pro"}
 
 
 @app.post("/api/profiles/{pid}/close-login")
 async def api_close_login(pid: str):
-    if pid in state.login_contexts:
-        ctx = state.login_contexts.pop(pid)
-        logged = await detect_google_login(ctx)
+    state.login_open_pids.discard(pid)
+    if pid in state.worker_contexts:
         try:
-            await ctx.close()
+            await state.worker_contexts[pid].close()
         except Exception:
             pass
-        profiles = load_profiles()
-        for p in profiles:
-            if p["id"] == pid:
-                p["logged_in"] = logged
-                if logged:
-                    p["enabled"] = True
-        save_profiles(profiles)
-        await broadcast_ws({"type": "PROFILES_UPDATED"})
+        state.worker_contexts.pop(pid, None)
+    await asyncio.to_thread(kill_stale_chrome, PROFILES_DIR / pid)
+    load_profiles(refresh_disk=True)
+    await broadcast_ws({"type": "PROFILES_UPDATED"})
     return {"success": True}
+
+
+@app.post("/api/profiles/{pid}/focus")
+async def api_focus_profile_worker(pid: str):
+    ctx = state.worker_contexts.get(pid)
+    if ctx and ctx.pages:
+        try:
+            await ctx.pages[0].bring_to_front()
+            return {"success": True}
+        except Exception:
+            pass
+    return {"success": False, "message": "No active background worker for this profile"}
+
+
+@app.post("/api/profiles/{pid}/open-folder")
+async def api_open_profile_folder(pid: str):
+    p_path = PROFILES_DIR / pid
+    p_path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.startfile(str(p_path))
+    except Exception:
+        subprocess.Popen(["explorer", str(p_path)])
+    return {"success": True, "path": str(p_path)}
 
 
 class ToggleReq(BaseModel):
@@ -964,7 +1447,7 @@ class ToggleReq(BaseModel):
 
 @app.post("/api/profiles/{pid}/toggle")
 async def api_toggle_profile(pid: str, req: ToggleReq):
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=False)
     for p in profiles:
         if p["id"] == pid:
             p["enabled"] = req.enabled
@@ -979,7 +1462,7 @@ class RenameReq(BaseModel):
 
 @app.post("/api/profiles/{pid}/rename")
 async def api_rename_profile(pid: str, req: RenameReq):
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=False)
     for p in profiles:
         if p["id"] == pid:
             p["name"] = req.name.strip() or p["name"]
@@ -990,25 +1473,24 @@ async def api_rename_profile(pid: str, req: RenameReq):
 
 @app.delete("/api/profiles/{pid}")
 async def api_reset_profile(pid: str):
-    for store in (state.login_contexts, state.worker_contexts):
-        if pid in store:
-            try:
-                await store[pid].close()
-            except Exception:
-                pass
-            store.pop(pid, None)
+    state.login_open_pids.discard(pid)
+    if pid in state.worker_contexts:
+        try:
+            await state.worker_contexts[pid].close()
+        except Exception:
+            pass
+        state.worker_contexts.pop(pid, None)
     pdir = PROFILES_DIR / pid
+    await asyncio.to_thread(kill_stale_chrome, pdir)
     if pdir.exists():
         shutil.rmtree(pdir, ignore_errors=True)
     pdir.mkdir(parents=True, exist_ok=True)
-    profiles = load_profiles()
+    profiles = load_profiles(refresh_disk=False)
     for p in profiles:
         if p["id"] == pid:
             p["logged_in"] = False
-            p["canvas_ready"] = False
-            p["flow_ready"] = False
-            p["canvas_template"] = None
-            p["flow_template"] = None
+            p["email"] = ""
+            p["status"] = "Not signed in — Click Login"
     save_profiles(profiles)
     await broadcast_ws({"type": "PROFILES_UPDATED"})
     return {"success": True}
@@ -1018,6 +1500,8 @@ class BatchStartReq(BaseModel):
     items: List[Dict[str, Any]]
     engine: str = "gemini-canvas"
     subMode: str = "image"
+    charImageBase64: Optional[str] = None
+    styleImageBase64: Optional[str] = None
 
 
 @app.post("/api/batch/start")
@@ -1025,8 +1509,10 @@ async def api_batch_start(req: BatchStartReq):
     if state.is_running:
         return JSONResponse(status_code=409, content={"success": False, "error": "Batch already running"})
 
-    profiles = load_profiles()
-    active_profiles = [p for p in profiles if p.get("enabled")]
+    profiles = load_profiles(refresh_disk=True)
+    active_profiles = [p for p in profiles if p.get("enabled") and p.get("logged_in")]
+    if not active_profiles:
+        active_profiles = [p for p in profiles if p.get("enabled")]
     if not active_profiles:
         active_profiles = [profiles[0]]
 
@@ -1035,7 +1521,6 @@ async def api_batch_start(req: BatchStartReq):
     state.current_items = req.items
     state.current_engine = req.engine
     state.current_sub_mode = req.subMode
-    state.captured_images.clear()
 
     batch_stamp = time.strftime("batch_%Y%m%d_%H%M%S")
     batch_dir = OUTPUTS_DIR / batch_stamp
@@ -1043,17 +1528,20 @@ async def api_batch_start(req: BatchStartReq):
     state.last_batch_dir = batch_dir
 
     item_map = {it["index"]: it for it in state.current_items}
-
-    # Distribute items round-robin across all enabled Chrome profiles!
     buckets: Dict[str, List[Dict[str, Any]]] = {p["id"]: [] for p in active_profiles}
     for i, item in enumerate(state.current_items):
         chosen = active_profiles[i % len(active_profiles)]
         buckets[chosen["id"]].append(item)
 
+    options = {
+        "charImageBase64": req.charImageBase64,
+        "styleImageBase64": req.styleImageBase64,
+    }
+
     async def orchestrate():
         await broadcast_ws({
             "type": "DIAGNOSTIC_LOG",
-            "text": f"Cluster dispatching {len(state.current_items)} shots across {len(active_profiles)} Chrome profile(s)..."
+            "text": f"Cluster dispatching {len(state.current_items)} shots across {len(active_profiles)} Chrome profile(s) ({req.engine})..."
         })
         tasks = []
         for p in active_profiles:
@@ -1063,7 +1551,7 @@ async def api_batch_start(req: BatchStartReq):
             if req.engine == "google-flow":
                 tasks.append(run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir))
             else:
-                tasks.append(run_canvas_profile_worker(p, chunk, item_map, batch_dir))
+                tasks.append(run_canvas_profile_worker(p, chunk, item_map, batch_dir, options))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1092,9 +1580,9 @@ async def api_batch_stop():
 async def api_open_output_folder():
     folder = str(state.last_batch_dir if state.last_batch_dir.exists() else OUTPUTS_DIR)
     try:
-        subprocess.Popen(["explorer", folder])
+        os.startfile(folder)
     except Exception:
-        pass
+        subprocess.Popen(["explorer", folder])
     return {"success": True, "path": folder}
 
 
