@@ -184,9 +184,9 @@ body {
 
 /* ================= Left Sidebar (RenderX Pro Dock) ================= */
 .sidebar {
-  width: 275px;
-  min-width: 265px;
-  max-width: 280px;
+  width: 295px;
+  min-width: 285px;
+  max-width: 315px;
   background: var(--bg-panel);
   border-right: 1px solid var(--border-subtle);
   display: flex;
@@ -197,50 +197,74 @@ body {
 .sidebar-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 14px 14px 20px 14px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
 }
 
 /* RenderX Pro Card Box with Solid Highlighted Header */
 .rx-box {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
+  background: #080C16;
+  border: 1px solid #1E293B;
   border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   overflow: hidden;
-  transition: border-color 0.15s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .rx-box:hover {
   border-color: #334155;
 }
 
+.rx-box.collapsed .rx-box-body {
+  display: none;
+}
+
+.rx-box.collapsed .rx-collapse-indicator {
+  transform: rotate(-90deg);
+}
+
 .rx-box-header {
-  background: var(--bg-card-header);
-  border-bottom: 1px solid var(--border-subtle);
-  padding: 6px 10px;
+  background: linear-gradient(180deg, #162032 0%, #0D1524 100%);
+  border-bottom: 1px solid #24344D;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.rx-box-header:hover {
+  background: linear-gradient(180deg, #1E2C44 0%, #111C30 100%);
+  border-bottom-color: #38BDF8;
 }
 
 .rx-box-title {
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: #FFFFFF;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+}
+
+.rx-collapse-indicator {
+  font-size: 9px;
+  color: #64748B;
+  transition: transform 0.2s ease;
 }
 
 .rx-box-body {
-  padding: 8px 10px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  background: #080C16;
 }
 
 .rx-helper-text {
@@ -251,10 +275,10 @@ body {
 
 /* Canvas Session Cluster Connect Bar */
 .canvas-cluster-bar {
-  background: #07090E;
+  background: #050811;
   border: 1px solid #1E293B;
   border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  padding: 8px 10px;
   margin-top: 4px;
 }
 
@@ -262,7 +286,7 @@ body {
   background: #1E293B;
   border: 1px solid #38BDF8;
   color: #38BDF8;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-radius: 4px;
   font-size: 10px;
   font-weight: 800;
@@ -280,12 +304,31 @@ body {
   color: #07090E;
 }
 
+.btn-canvas-cookie {
+  background: #1E293B;
+  border: 1px solid #F59E0B;
+  color: #F59E0B;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s;
+}
+
+.btn-canvas-cookie:hover {
+  background: rgba(245, 158, 11, 0.2);
+}
+
 .btn-canvas-refresh {
   background: #1E293B;
   border: 1px solid #1E293B;
   color: var(--text-muted);
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 4px;
   cursor: pointer;
   display: flex;
@@ -299,11 +342,34 @@ body {
   border-color: #38BDF8;
 }
 
+/* Cookie Subpanel */
+.cookie-subpanel {
+  margin-top: 8px;
+  padding: 8px;
+  background: #03050A;
+  border: 1px dashed #334155;
+  border-radius: var(--radius-xs);
+}
+
+.btn-cookie-upload {
+  font-size: 8.5px;
+  color: #38BDF8;
+  border: 1px solid #1E293B;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.btn-cookie-upload:hover {
+  border-color: #38BDF8;
+  background: rgba(56, 189, 248, 0.1);
+}
+
 /* Aspect Ratio Buttons Group (16:9, 9:16, 1:1) */
 .aspect-btn-group {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 4px;
+  gap: 5px;
   margin-top: 4px;
 }
 
@@ -312,12 +378,24 @@ body {
   border: 1px solid #1E293B;
   border-radius: var(--radius-xs);
   color: var(--text-muted);
-  padding: 5px 2px;
-  font-size: 9.5px;
+  padding: 7px 4px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
   text-align: center;
   transition: all 0.15s;
+}
+
+.btn-aspect:hover {
+  border-color: #475569;
+  color: #FFFFFF;
+}
+
+.btn-aspect.active {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: #38BDF8;
+  color: #38BDF8;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
 }
 
 .btn-aspect.active {
@@ -842,6 +920,22 @@ body {
   border-radius: 3px;
   padding: 1px 5px;
   font-weight: 800;
+}
+
+.card-actions-single-row {
+  display: flex;
+  gap: 4px;
+  border-top: 1px solid #1E293B;
+  padding-top: 5px;
+  margin-top: auto;
+}
+
+.card-actions-single-row .btn-card-action {
+  flex: 1;
+  justify-content: center;
+  padding: 4px 6px;
+  font-size: 9.5px;
+  font-weight: 700;
 }
 
 .card-actions-grid {
