@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RenderX Image Studio - AI Video Timeline Generator</title>
-  <link rel="stylesheet" href="css/studio.css">
+  <link rel="stylesheet" href="css/studio.css?v=1.0.5">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
@@ -24,7 +24,7 @@
       </div>
 
       <div class="logo-text">
-        <h1>RenderX Image Studio <span class="badge-version">v1.0.4 PRO</span></h1>
+        <h1>RenderX Image Studio <span class="badge-version">v1.0.5 PRO</span></h1>
         <p>AI Video Timeline &amp; Consistency Generator</p>
       </div>
     </div>
@@ -33,7 +33,7 @@
       <!-- Active Engine Status Pill -->
       <div class="engine-pill" id="activeEnginePill" title="Current Active AI Engine">
         <span class="dot"></span>
-        <span id="activeEngineLabel">Gemini Canvas (Free Google Session)</span>
+        <span id="activeEngineLabel">Google Gemini Canvas (Live Session)</span>
       </div>
 
       <!-- Settings / API Keys Modal Trigger -->
@@ -55,31 +55,31 @@
   <!-- Workspace Container -->
   <div class="workspace">
 
-    <!-- Left Sidebar: ~290px Width — RenderX Pro Style Solid Highlighted Boxes -->
+    <!-- Left Sidebar: ~315px Width — Always-Open Solid Highlighted Boxes with Smooth Mouse Wheel Scrolling -->
     <aside class="sidebar">
-      <div class="sidebar-scroll">
+      <div class="sidebar-scroll" id="sidebarScrollContainer">
 
         <!-- Box 1: ENGINE & ASPECT RATIO -->
         <div class="rx-box" id="boxEngine">
-          <div class="rx-box-header" data-toggle="collapse" data-target="#boxEngineBody">
+          <div class="rx-box-header">
             <span class="rx-box-title">
               <span>⚙️</span><span>ENGINE &amp; ASPECT RATIO</span>
             </span>
-            <span class="rx-collapse-indicator">▼</span>
+            <span class="rx-box-badge">PRIMARY</span>
           </div>
           <div class="rx-box-body" id="boxEngineBody">
             <label class="input-label" for="engineSelect">Primary AI Engine</label>
             <select id="engineSelect" class="select-control">
               <option value="gemini-canvas" selected>Google Gemini Canvas (Live Session)</option>
               <option value="google-aistudio">Google AI Studio (Imagen 3 API)</option>
-              <option value="pollinations-flux">Free Serverless (Pollinations Turbo)</option>
+              <option value="pollinations-flux">Free Serverless Engine (Turbo Multi-Node)</option>
             </select>
 
             <!-- Gemini Canvas Active Cluster & Connect Bar -->
             <div class="canvas-cluster-bar" id="canvasClusterBox">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                <span style="font-size:9.5px; font-weight:700; color:#94A3B8;">CANVAS SESSION AUTH:</span>
-                <span id="canvasClusterStatus" style="font-size:9.5px; color:#10B981; font-weight:800;">🟢 Connected</span>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:9.5px; font-weight:800; color:#94A3B8; letter-spacing:0.4px;">ACTIVE CANVAS CLUSTER:</span>
+                <span id="canvasClusterStatus" style="font-size:9.5px; color:#10B981; font-weight:800;">🟢 Connected (acc1)</span>
               </div>
               <div style="display:flex; gap:6px;">
                 <button type="button" id="openCanvasTabBtn" class="btn-canvas-connect" title="Open or Connect Gemini Canvas Session">
@@ -88,12 +88,12 @@
                 <button type="button" id="toggleCookieBtn" class="btn-canvas-cookie" title="Upload or Paste Google Session Cookies">
                   <span>🍪 Cookies</span>
                 </button>
-                <button type="button" id="refreshCanvasTabBtn" class="btn-canvas-refresh" title="Recheck Connection">
+                <button type="button" id="refreshCanvasTabBtn" class="btn-canvas-refresh" title="Recheck Canvas Connection">
                   <span>🔄</span>
                 </button>
               </div>
 
-              <!-- Collapsible Cookie Upload / Paste Subpanel -->
+              <!-- Collapsible Cookie Upload / Paste Subpanel (Drawer) -->
               <div class="cookie-subpanel" id="cookieSubpanel" style="display: none;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <span style="font-size: 9px; color: #38BDF8; font-weight: 700;">Google Session Cookies</span>
@@ -105,7 +105,7 @@
                   <button type="button" id="saveCookieBtn" class="btn-subtle" style="font-size: 9px; padding: 2px 8px; color: #10B981;">💾 Save Cookies</button>
                   <button type="button" id="clearCookieBtn" class="btn-subtle" style="font-size: 9px; padding: 2px 6px; color: #EF4444;">Clear</button>
                 </div>
-                <div id="cookieStatusText" style="font-size: 8.5px; color: #64748B; margin-top: 2px;">Default: Using active Chrome Google tab</div>
+                <div id="cookieStatusText" style="font-size: 8.5px; color: #64748B; margin-top: 2px;">Default: Auto-connected to active Google session</div>
               </div>
             </div>
 
@@ -131,20 +131,17 @@
 
         <!-- Box 2: CHARACTER CONSISTENCY -->
         <div class="rx-box" id="boxCharacter">
-          <div class="rx-box-header" data-toggle="collapse" data-target="#boxCharBody">
+          <div class="rx-box-header">
             <span class="rx-box-title">
               <span>👤</span><span>CHARACTER CONSISTENCY</span>
             </span>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <label style="display:flex; align-items:center; gap:4px; font-size:9.5px; color:#38BDF8; font-weight:700; cursor:pointer;" onclick="event.stopPropagation();">
-                <input type="checkbox" id="charLockToggle">
-                <span>ACTIVE</span>
-              </label>
-              <span class="rx-collapse-indicator">▼</span>
-            </div>
+            <label class="box-active-toggle" onclick="event.stopPropagation();">
+              <input type="checkbox" id="charLockToggle">
+              <span>ACTIVE</span>
+            </label>
           </div>
           <div class="rx-box-body" id="boxCharBody">
-            <textarea id="charDesc" class="textarea-control" rows="3" placeholder="Describe character appearance (e.g. young man with round glasses, blue cyberpunk jacket)..."></textarea>
+            <textarea id="charDesc" class="textarea-control" rows="3" placeholder="Describe character appearance (e.g. 26-year-old Asian man, short black hair, red cyberpunk leather jacket)..."></textarea>
             
             <div class="upload-row">
               <div class="upload-thumbnail" id="charThumb" title="Click to upload character reference image">
@@ -154,7 +151,7 @@
               </div>
               <div class="upload-meta">
                 <label class="upload-btn-label" for="charFileInput">📁 Upload Reference Image</label>
-                <button class="upload-remove-btn" id="charRemoveBtn">Remove</button>
+                <button type="button" class="upload-remove-btn" id="charRemoveBtn" style="display:none;">✕ Remove</button>
               </div>
             </div>
           </div>
@@ -162,17 +159,14 @@
 
         <!-- Box 3: STYLE CONSISTENCY -->
         <div class="rx-box" id="boxStyle">
-          <div class="rx-box-header" data-toggle="collapse" data-target="#boxStyleBody">
+          <div class="rx-box-header">
             <span class="rx-box-title">
               <span>🎨</span><span>STYLE CONSISTENCY</span>
             </span>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <label style="display:flex; align-items:center; gap:4px; font-size:9.5px; color:#A78BFA; font-weight:700; cursor:pointer;" onclick="event.stopPropagation();">
-                <input type="checkbox" id="styleLockToggle">
-                <span>ACTIVE</span>
-              </label>
-              <span class="rx-collapse-indicator">▼</span>
-            </div>
+            <label class="box-active-toggle style-toggle" onclick="event.stopPropagation();">
+              <input type="checkbox" id="styleLockToggle">
+              <span>ACTIVE</span>
+            </label>
           </div>
           <div class="rx-box-body" id="boxStyleBody">
             <textarea id="styleDesc" class="textarea-control" rows="3" placeholder="Style directives (e.g. 3D Pixar render, Octane 8K, volumetric lighting, raytraced reflections)..."></textarea>
@@ -185,7 +179,7 @@
               </div>
               <div class="upload-meta">
                 <label class="upload-btn-label" for="styleFileInput">🎨 Upload Style Reference</label>
-                <button class="upload-remove-btn" id="styleRemoveBtn">Remove</button>
+                <button type="button" class="upload-remove-btn" id="styleRemoveBtn" style="display:none;">✕ Remove</button>
               </div>
             </div>
           </div>
@@ -193,11 +187,11 @@
 
         <!-- Box 4: NEGATIVE PROMPTS (1-CLICK AVOID) -->
         <div class="rx-box" id="boxNegative">
-          <div class="rx-box-header" data-toggle="collapse" data-target="#boxNegBody">
+          <div class="rx-box-header">
             <span class="rx-box-title">
               <span>🚫</span><span>NEGATIVE PROMPTS (1-CLICK)</span>
             </span>
-            <span class="rx-collapse-indicator">▼</span>
+            <span class="rx-box-badge">FILTERS</span>
           </div>
           <div class="rx-box-body" id="boxNegBody">
             <div class="chips-container" id="negativeChips">
@@ -217,21 +211,20 @@
 
         <!-- Box 5: TIMELINE PROMPTS -->
         <div class="rx-box" id="boxTimeline">
-          <div class="rx-box-header" data-toggle="collapse" data-target="#boxTimelineBody">
+          <div class="rx-box-header">
             <span class="rx-box-title">
               <span>⏱️</span><span>TIMELINE PROMPTS</span>
             </span>
             <div style="display: flex; align-items: center; gap: 6px;">
-              <button class="btn-subtle" id="autoFormatBtn" title="Auto-format timeline with clean 1-line gaps" onclick="event.stopPropagation();">⚡ Auto Sync</button>
+              <button type="button" class="btn-subtle" id="autoFormatBtn" title="Auto-format timeline with clean 1-line gaps">⚡ Auto Sync</button>
               <span class="line-counter" id="promptCount">0</span>
-              <span class="rx-collapse-indicator">▼</span>
             </div>
           </div>
           <div class="rx-box-body" id="boxTimelineBody">
-            <textarea id="bulkPrompts" class="textarea-control" rows="6" placeholder="00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion...&#10;02.50-08.59 | Scene 2: Cinematic Close-Up detail shot...&#10;08.59-16.42 | Scene 3: Extreme Wide Establishing Angle...&#10;16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing..."></textarea>
+            <textarea id="bulkPrompts" class="textarea-control" rows="8" placeholder="00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion...&#10;02.50-08.59 | Scene 2: Cinematic Close-Up detail shot...&#10;08.59-16.42 | Scene 3: Extreme Wide Establishing Angle...&#10;16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing..."></textarea>
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-              <button class="btn-subtle" id="loadSamplePromptsBtn" style="font-size: 9.5px; padding: 3px 6px;">Load Sample Script</button>
+              <button type="button" class="btn-subtle" id="loadSamplePromptsBtn" style="font-size: 9.5px; padding: 4px 8px;">Load Sample Script</button>
               <span style="font-size: 9px; color: var(--text-dim);">1 scene per line</span>
             </div>
           </div>
@@ -239,7 +232,7 @@
 
       </div>
 
-      <!-- Bottom Action Buttons -->
+      <!-- Bottom Action Buttons: Fixed at Sidebar Bottom -->
       <div class="sidebar-footer">
         <button class="btn-primary" id="generateAllBtn" onclick="window.triggerGenerateBatch()">
           <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
@@ -271,9 +264,9 @@
         </div>
 
         <div class="canvas-actions">
-          <button class="btn-gallery-action danger" id="resetShootGalleryBtn">🗑️ Reset Shoot Gallery</button>
-          <button class="btn-gallery-action warning" id="downloadAllZipTopBtn">📦 Download All (.zip)</button>
-          <button class="btn-gallery-action success" id="pushTimelineBtn">🚀 Push All to Video Timeline -></button>
+          <button type="button" class="btn-gallery-action danger" id="resetShootGalleryBtn">🗑️ Reset Shoot Gallery</button>
+          <button type="button" class="btn-gallery-action warning" id="downloadAllZipTopBtn">📦 Download All (.zip)</button>
+          <button type="button" class="btn-gallery-action success" id="pushTimelineBtn">🚀 Push All to Video Timeline -></button>
         </div>
       </div>
 
@@ -297,9 +290,9 @@
               </div>
               <div class="card-prompt-text">Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field...</div>
               <div class="card-actions-single-row">
-                <button class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
-                <button class="btn-card-action btn-regen" data-action="regen" data-index="1">🎲 Re-Roll</button>
-                <button class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
+                <button type="button" class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="regen" data-index="1">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
               </div>
             </div>
           </div>
@@ -320,9 +313,9 @@
               </div>
               <div class="card-prompt-text">Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting...</div>
               <div class="card-actions-single-row">
-                <button class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
-                <button class="btn-card-action btn-regen" data-action="regen" data-index="2">🎲 Re-Roll</button>
-                <button class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
+                <button type="button" class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="regen" data-index="2">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
               </div>
             </div>
           </div>
@@ -343,9 +336,9 @@
               </div>
               <div class="card-prompt-text">Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric rim...</div>
               <div class="card-actions-single-row">
-                <button class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
-                <button class="btn-card-action btn-regen" data-action="regen" data-index="3">🎲 Re-Roll</button>
-                <button class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
+                <button type="button" class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="regen" data-index="3">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
               </div>
             </div>
           </div>
@@ -366,9 +359,9 @@
               </div>
               <div class="card-prompt-text">Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh...</div>
               <div class="card-actions-single-row">
-                <button class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
-                <button class="btn-card-action btn-regen" data-action="regen" data-index="4">🎲 Re-Roll</button>
-                <button class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
+                <button type="button" class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
+                <button type="button" class="btn-card-action btn-regen" data-action="regen" data-index="4">🎲 Re-Roll</button>
+                <button type="button" class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
               </div>
             </div>
           </div>
@@ -389,7 +382,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Engine &amp; API Configuration</h2>
-        <button class="btn-icon" id="closeSettingsBtn">✕</button>
+        <button type="button" class="btn-icon" id="closeSettingsBtn">✕</button>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -408,7 +401,7 @@
           </select>
         </div>
 
-        <button class="btn-primary" id="saveSettingsBtn">Save Configuration</button>
+        <button type="button" class="btn-primary" id="saveSettingsBtn">Save Configuration</button>
       </div>
     </div>
   </div>
@@ -418,7 +411,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 id="lightboxTitle">Image Preview</h2>
-        <button class="btn-icon" id="closeLightboxBtn">✕</button>
+        <button type="button" class="btn-icon" id="closeLightboxBtn">✕</button>
       </div>
 
       <div class="lightbox-image-container">
@@ -427,7 +420,7 @@
 
       <div class="lightbox-details">
         <p id="lightboxPrompt" style="font-size: 10.5px; color: var(--text-muted); flex: 1; margin-right: 12px;"></p>
-        <button class="btn-secondary" id="lightboxDownloadBtn" style="width: auto; padding: 5px 10px;">Download Scene</button>
+        <button type="button" class="btn-secondary" id="lightboxDownloadBtn" style="width: auto; padding: 5px 10px;">Download Scene</button>
       </div>
     </div>
   </div>
@@ -437,7 +430,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2>Edit Scene Prompt &amp; Regenerate</h2>
-        <button class="btn-icon" id="closeEditPromptBtn">✕</button>
+        <button type="button" class="btn-icon" id="closeEditPromptBtn">✕</button>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -451,7 +444,7 @@
           <textarea id="editPromptInput" class="textarea-control" rows="3"></textarea>
         </div>
 
-        <button class="btn-primary" id="saveAndRegenBtn">Apply &amp; Regenerate Scene</button>
+        <button type="button" class="btn-primary" id="saveAndRegenBtn">Apply &amp; Regenerate Scene</button>
       </div>
     </div>
   </div>
@@ -462,14 +455,14 @@
   </div>
 
   <!-- Scripts -->
-  <script src="libs/simple-zip.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/parser.js"></script>
-  <script src="js/engines/pollinations-engine.js"></script>
-  <script src="js/engines/canvas-engine.js"></script>
-  <script src="js/engines/aistudio-engine.js"></script>
-  <script src="js/engines/engine-manager.js"></script>
-  <script src="js/zip-exporter.js"></script>
-  <script src="js/app.js"></script>
+  <script src="libs/simple-zip.js?v=1.0.5"></script>
+  <script src="js/storage.js?v=1.0.5"></script>
+  <script src="js/parser.js?v=1.0.5"></script>
+  <script src="js/engines/pollinations-engine.js?v=1.0.5"></script>
+  <script src="js/engines/canvas-engine.js?v=1.0.5"></script>
+  <script src="js/engines/aistudio-engine.js?v=1.0.5"></script>
+  <script src="js/engines/engine-manager.js?v=1.0.5"></script>
+  <script src="js/zip-exporter.js?v=1.0.5"></script>
+  <script src="js/app.js?v=1.0.5"></script>
 </body>
 </html>
