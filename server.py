@@ -831,11 +831,14 @@ async def run_canvas_profile_worker(
                     if stop_vis:
                         started_generating = True
 
-                    # Inspect #image-grid cards for completed images AND instant failure states
-                    extracted = await frame.evaluate("""async (skipDone, skipFailed) => {
+                    # Inspect #image-grid .image-card-group cards (skip hidden placeholder col-span-full!)
+                    extracted = await frame.evaluate("""async ({ skipDone, skipFailed }) => {
                         const grid = document.querySelector('#image-grid');
                         if (!grid) return { tiles: [], failed: [], totalCards: 0 };
-                        const cards = Array.from(grid.children);
+                        let cards = Array.from(grid.querySelectorAll('.image-card-group'));
+                        if (cards.length === 0) {
+                            cards = Array.from(grid.children).filter(el => !el.classList.contains('hidden') && !el.classList.contains('col-span-full'));
+                        }
                         const out = [];
                         const fails = [];
                         for (let i = 0; i < cards.length; i++) {
@@ -872,7 +875,7 @@ async def run_canvas_profile_worker(
                             }
                         }
                         return { tiles: out, failed: fails, totalCards: cards.length };
-                    }""", list(done_slots), list(failed_slots))
+                    }""", {"skipDone": list(done_slots), "skipFailed": list(failed_slots)})
 
                     for tile in extracted.get("tiles", []):
                         slot = tile["slot"]
@@ -914,7 +917,10 @@ async def run_canvas_profile_worker(
                         final_ext = await frame.evaluate("""async (alreadyDone) => {
                             const grid = document.querySelector('#image-grid');
                             if (!grid) return [];
-                            const cards = Array.from(grid.children);
+                            let cards = Array.from(grid.querySelectorAll('.image-card-group'));
+                            if (cards.length === 0) {
+                                cards = Array.from(grid.children).filter(el => !el.classList.contains('hidden') && !el.classList.contains('col-span-full'));
+                            }
                             const out = [];
                             for (let i = 0; i < cards.length; i++) {
                                 if (alreadyDone.includes(i)) continue;
@@ -1224,6 +1230,22 @@ def _flow_ratio_label(ar: str) -> str:
     return "1:1 Square format"
 
 
+async def _flow_close_overlays(page: Page):
+    """Dismiss any lingering Angular CDK transparent backdrop/menu in Google Flow."""
+    for _ in range(4):
+        try:
+            bd = page.locator('.cdk-overlay-backdrop-showing')
+            if await bd.count() == 0:
+                break
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.35)
+            if await bd.count() > 0:
+                await bd.first.click(force=True, position={"x": 5, "y": 5})
+                await asyncio.sleep(0.3)
+        except Exception:
+            break
+
+
 async def _flow_attach_ingredient_image(page: Page, data_url: str, prefix: str = "rx_ing") -> bool:
     """Attach a Dashboard reference image (Character, Style, or Init Frame) into Flow Agent prompt box."""
     if not data_url or "," not in data_url:
@@ -1232,31 +1254,35 @@ async def _flow_attach_ingredient_image(page: Page, data_url: str, prefix: str =
     os.close(fd)
     try:
         Path(tmp_path).write_bytes(base64.b64decode(data_url.split(",", 1)[1]))
+        await _flow_close_overlays(page)
         add_ing = page.locator('button[aria-label="Add ingredients to the prompt box"]:visible, button[aria-label="Add media menu"]:visible').first
         if await add_ing.count() == 0:
             return False
-        await add_ing.click(timeout=4000)
+        await add_ing.click(timeout=4000, force=True)
         await asyncio.sleep(0.7)
 
         upload_btn = page.locator('.cdk-overlay-container button, .cdk-overlay-container [role="menuitem"]').filter(has_text=re.compile(r"Upload media", re.I)).first
         if await upload_btn.count() > 0:
             async with page.expect_file_chooser(timeout=10000) as fc_info:
-                await upload_btn.click(timeout=4000)
+                await upload_btn.click(timeout=4000, force=True)
             fc = await fc_info.value
             await fc.set_files(tmp_path)
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(2.5)
             await _flow_dismiss_banners(page)
+            await _flow_close_overlays(page)
             return True
 
         file_inp = page.locator("input[type=file]").first
         if await file_inp.count() > 0:
             await file_inp.set_input_files(tmp_path)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(2.2)
             await _flow_dismiss_banners(page)
+            await _flow_close_overlays(page)
             return True
     except Exception:
         pass
     finally:
+        await _flow_close_overlays(page)
         try:
             os.remove(tmp_path)
         except OSError:
@@ -1294,26 +1320,66 @@ def _build_flow_agent_directives(aspect_ratio: str, is_video: bool, options: Dic
 
 
 async def _flow_paste_and_submit(page: Page, text: str):
+    await _flow_close_overlays(page)
     compose = page.locator(
         'div[aria-label="Describe your goal"][contenteditable="true"]:visible, '
         'div[aria-label="What do you want to create?"][contenteditable="true"]:visible, '
         '[contenteditable="true"]:visible, textarea:visible'
     ).first
     await compose.wait_for(state="visible", timeout=25000)
-    await compose.click()
+    await compose.click(force=True)
+    await asyncio.sleep(0.25)
+    await page.keyboard.press("Control+A")
+    await page.keyboard.press("Backspace")
     await asyncio.sleep(0.2)
-    try:
-        await compose.fill(text)
-    except Exception:
-        await page.keyboard.press("Control+A")
-        await page.keyboard.type(text, delay=2)
-    await asyncio.sleep(0.4)
 
+    lines = [ln for ln in text.split("\n")]
+    for idx, line in enumerate(lines):
+        if line:
+            await compose.press_sequentially(line, delay=4)
+        if idx < len(lines) - 1:
+            await page.keyboard.press("Shift+Enter")
+    await asyncio.sleep(0.8)
+
+    # Verify Start generation button is enabled and actually triggers submission
     start_btn = page.locator('button[aria-label="Start generation"]:visible, button[aria-label*="Create" i]:visible, button[aria-label*="Send" i]:visible').first
-    if await start_btn.count() > 0 and await start_btn.is_visible():
-        await start_btn.click()
-    else:
+    for attempt in range(3):
+        if await start_btn.count() > 0 and await start_btn.is_visible():
+            if await start_btn.get_attribute("disabled") is not None:
+                await compose.click()
+                await page.keyboard.type(" ", delay=15)
+                await asyncio.sleep(0.4)
+            try:
+                await start_btn.scroll_into_view_if_needed()
+                await start_btn.click(force=True)
+            except Exception:
+                await compose.press("Enter")
+        else:
+            await compose.press("Enter")
+
+        await asyncio.sleep(2.0)
+        try:
+            still_text = (await compose.inner_text() or "").strip()
+            has_stop = await page.locator('button:has-text("stop"):visible, button:has-text("Stop"):visible').count() > 0
+            if has_stop or len(still_text) < 4:
+                break
+        except Exception:
+            break
+        await compose.click()
         await compose.press("Enter")
+
+
+async def _flow_fetch_media_dataurl(page: Page, src: str) -> str:
+    if src.startswith("data:"):
+        return src
+    try:
+        return await page.evaluate("""async (s) => {
+            const r = await fetch(s, { credentials: 'include' });
+            const b = await r.blob();
+            return await new Promise(res => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
+        }""", src)
+    except Exception:
+        return src
 
 
 async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, directives: str = "", timeout_sec: int = 120) -> str:
@@ -1326,7 +1392,7 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
     if is_video and ref_b64 and "," in ref_b64:
         await _flow_attach_ingredient_image(page, ref_b64, prefix="rx_i2v")
 
-    media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
+    media_sel = 'video[src], img[src*="/asb/"], img[src*="flow.google.com"], img[src*="googleusercontent"], img[src*="storage.googleapis"], img[src^="blob:"], img[src^="data:image"]'
     before_srcs = set(
         await page.evaluate(
             f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)"
@@ -1352,18 +1418,11 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
         }}""")
         for entry in reversed(now_items):
             src = entry.get("src", "")
-            if not src or src in before_srcs:
+            if not src or src in before_srcs or "/ogw/" in src or "gstatic" in src:
                 continue
-            if entry.get("tag") == "IMG" and entry.get("w", 0) < 64:
+            if entry.get("tag") == "IMG" and entry.get("w", 0) < 160:
                 continue
-            if src.startswith("blob:"):
-                b64 = await page.evaluate("""async (s) => {
-                    const r = await fetch(s);
-                    const b = await r.blob();
-                    return await new Promise(res => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
-                }""", src)
-                return b64
-            return src
+            return await _flow_fetch_media_dataurl(page, src)
 
     raise RuntimeError("Timed out waiting for Google Flow render")
 
@@ -1391,10 +1450,12 @@ async def run_flow_profile_worker(
             if "accounts.google.com" in (page.url or "").lower():
                 raise RuntimeError("Profile signed out of Google Flow. Click Login for this profile first.")
 
-            # Enter clean project workspace if on home list
+            # Enter clean project workspace if createNewProject is requested or on home list
+            create_new = options.get("createNewProject", True)
+            proj_name = (options.get("projectName") or "").strip()
             try:
                 new_btn = page.get_by_role("button", name="New project").first
-                if await new_btn.count() > 0:
+                if await new_btn.count() > 0 and (create_new or "/project/" not in (page.url or "")):
                     await new_btn.scroll_into_view_if_needed()
                     await new_btn.click(force=True)
                     for _ in range(25):
@@ -1404,6 +1465,19 @@ async def run_flow_profile_worker(
                     await _flow_dismiss_banners(page)
             except Exception:
                 pass
+
+            # Rename Flow project/collection if a projectName was specified in Dashboard
+            if proj_name:
+                try:
+                    coll_inp = page.locator('input[value*="Untitled"], input[placeholder*="Untitled"]').first
+                    if await coll_inp.count() > 0 and await coll_inp.is_visible():
+                        await coll_inp.fill(proj_name[:60])
+                        confirm_rn = page.locator('button[aria-label="Confirm rename"]:visible').first
+                        if await confirm_rn.count() > 0:
+                            await confirm_rn.click()
+                            await asyncio.sleep(0.4)
+                except Exception:
+                    pass
 
             first_ar = assigned_items[0].get("aspectRatio", "1:1") if assigned_items else "1:1"
             is_video = "video" in sub_mode
@@ -1422,12 +1496,14 @@ async def run_flow_profile_worker(
                 has_style_img = await _flow_attach_ingredient_image(page, options["styleImageBase64"], prefix="rx_style")
 
             directives = _build_flow_agent_directives(first_ar, is_video, options, has_char_img, has_style_img)
+            if proj_name:
+                directives = f"Project: {proj_name} | " + directives
             await broadcast_ws({
                 "type": "DIAGNOSTIC_LOG",
                 "text": f"[{pid}] Flow Agent {'ON' if agent_on else 'Ready'} | {directives[:140]}"
             })
 
-            media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
+            media_sel = 'video[src], img[src*="/asb/"], img[src*="flow.google.com"], img[src*="googleusercontent"], img[src*="storage.googleapis"], img[src^="blob:"], img[src^="data:image"]'
 
             # Batch mode (multi-prompt image generation): paste ALL prompts + Dashboard directives at once into Flow Agent
             if len(assigned_items) > 1 and not is_video:
@@ -1448,46 +1524,72 @@ async def run_flow_profile_worker(
                 await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Pasted {len(assigned_items)} prompts + Dashboard specs into Flow Agent..."})
                 await _flow_paste_and_submit(page, batch_msg)
 
-                collected_idx = 0
+                pending_items = list(assigned_items)
                 last_progress = time.time()
-                deadline = time.time() + max(180, len(assigned_items) * 35)
-                while collected_idx < len(assigned_items) and time.time() < deadline and not state.should_stop:
+                started_flow = False
+                deadline = time.time() + max(240, len(assigned_items) * 45)
+                while pending_items and time.time() < deadline and not state.should_stop:
                     await asyncio.sleep(1.5)
                     await _flow_dismiss_banners(page)
                     await _flow_click_approve(page)
 
+                    try:
+                        stop_active = await page.locator('button[aria-label="Stop"]:visible, button:has-text("stop"):visible').count() > 0
+                    except Exception:
+                        stop_active = False
+                    if stop_active:
+                        started_flow = True
+                        last_progress = time.time()
+
                     now_items = await page.evaluate(f"""() => {{
                         const els = Array.from(document.querySelectorAll('{media_sel}'));
-                        return els.map(el => ({{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200 }}));
+                        return els.map(el => {{
+                            let meta = el.alt || el.getAttribute('aria-label') || '';
+                            let cur = el.parentElement;
+                            for (let d = 0; d < 5 && cur; d++) {{
+                                const a = Array.from(cur.querySelectorAll('[aria-label]')).map(x => x.getAttribute('aria-label') || '').join(' ');
+                                const t = (cur.innerText || '').trim();
+                                if (a || t) meta += ' ' + a + ' ' + t;
+                                cur = cur.parentElement;
+                            }}
+                            return {{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200, hint: meta.slice(0, 400) }};
+                        }});
                     }}""")
+
+                    def pick_matching_item(hint_text: str):
+                        h_words = {w for w in re.findall(r"[a-z0-9]{4,}", (hint_text or "").lower()) if w not in ("favorite", "more", "options", "reuse", "prompt", "image", "flow")}
+                        best_pos = 0
+                        best_score = 0
+                        if h_words:
+                            for pos, cand in enumerate(pending_items):
+                                p_words = set(re.findall(r"[a-z0-9]{4,}", sanitize_prompt(cand.get("rawPrompt") or cand["fullPrompt"]).lower()))
+                                sc = len(h_words & p_words)
+                                if sc > best_score:
+                                    best_score = sc
+                                    best_pos = pos
+                        # Flow prepends newest tiles at index 0: if no keyword match & multiple new entries, match newest-first if order inverted
+                        return pending_items.pop(best_pos)
+
                     for entry in now_items:
                         src = entry.get("src", "")
-                        if not src or src in before_srcs:
+                        if not src or src in before_srcs or "/ogw/" in src or "gstatic" in src:
                             continue
-                        if entry.get("tag") == "IMG" and entry.get("w", 0) < 64:
+                        if entry.get("tag") == "IMG" and entry.get("w", 0) < 160:
                             continue
                         before_srcs.add(src)
-                        if collected_idx < len(assigned_items):
-                            it = assigned_items[collected_idx]
-                            collected_idx += 1
+                        if pending_items:
+                            it = pick_matching_item(entry.get("hint", ""))
                             last_progress = time.time()
-                            media_val = src
-                            if src.startswith("blob:"):
-                                media_val = await page.evaluate("""async (s) => {
-                                    const r = await fetch(s);
-                                    const b = await r.blob();
-                                    return await new Promise(res => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
-                                }""", src)
+                            media_val = await _flow_fetch_media_dataurl(page, src)
                             await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media_val}, item_map, batch_dir, sub_mode)
 
-                    # If Flow Agent stopped producing after 40s idle following partial results, break to recover missing ones cleanly
-                    if collected_idx > 0 and (time.time() - last_progress) > 45:
+                    if started_flow and not stop_active and (time.time() - last_progress) > 10:
                         break
-                    if collected_idx == 0 and (time.time() - last_progress) > 45:
+                    if not started_flow and (time.time() - last_progress) > 45:
                         break
 
                 # Recover any unproduced prompt individually inside Flow Agent or mark failed
-                for it in assigned_items[collected_idx:]:
+                for it in pending_items:
                     if state.should_stop:
                         break
                     try:
@@ -1833,6 +1935,8 @@ class BatchStartReq(BaseModel):
     items: List[Dict[str, Any]]
     engine: str = "gemini-canvas"
     subMode: str = "image"
+    projectName: Optional[str] = "RenderX_Project_01"
+    createNewProject: bool = True
     isRetry: bool = False
     negPrompt: Optional[str] = None
     charDesc: Optional[str] = None
@@ -1939,7 +2043,8 @@ async def api_batch_start(req: BatchStartReq):
         work_items = req.items
     else:
         state.current_items = req.items
-        batch_stamp = time.strftime("batch_%Y%m%d_%H%M%S")
+        raw_pn = re.sub(r"[^a-zA-Z0-9_-]+", "_", (req.projectName or "RenderX_Project").strip()).strip("_") or "RenderX_Project"
+        batch_stamp = f"{raw_pn}_{time.strftime('%Y%m%d_%H%M%S')}"
         batch_dir = OUTPUTS_DIR / batch_stamp
         batch_dir.mkdir(parents=True, exist_ok=True)
         work_items = state.current_items
@@ -1953,6 +2058,8 @@ async def api_batch_start(req: BatchStartReq):
         buckets[chosen["id"]].append(item)
 
     options = {
+        "projectName": req.projectName,
+        "createNewProject": req.createNewProject,
         "negPrompt": req.negPrompt,
         "charDesc": req.charDesc,
         "styleDesc": req.styleDesc,
