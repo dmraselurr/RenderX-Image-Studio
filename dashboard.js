@@ -1,7 +1,7 @@
 /**
- * RenderX Image Studio - Studio Dashboard Controller (v1.0.8 PRO)
+ * RenderX Image Studio - Studio Dashboard Controller (v1.0.9 PRO)
  * Dual-Mode Account Studio (Gemini Canvas & Google Flow)
- * 4-Column Responsive Grid, 5-Box Left Sidebar & Multi-Format ZIP Packaging
+ * Attached Side Panel Workspace + Keep-Alive + State Persistence
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const sessionStatusPill = $('sessionStatusPill');
   const sessionDot = $('sessionDot');
   const sessionStatusText = $('sessionStatusText');
-  const btnArrangeSplit = $('btnArrangeSplit');
+  const btnSidePanelInfo = $('btnSidePanelInfo');
   const sessionInfoBtn = $('sessionInfoBtn');
   const globalResetBtn = $('globalResetBtn');
 
@@ -112,7 +112,52 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => toastCapsule.classList.remove('show'), duration);
   }
 
-  // ================= 1. Dual Engine Switching =================
+  // ================= 1. MV3 Keep-Alive Port & Heartbeat =================
+  let keepAlivePort = null;
+  let heartbeatTimer = null;
+
+  function startKeepAlive() {
+    if (keepAlivePort) return;
+    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.connect) return;
+
+    try {
+      keepAlivePort = chrome.runtime.connect({ name: 'renderex_keepalive' });
+      console.log('[RenderX] KeepAlive long-lived port connected');
+
+      keepAlivePort.onDisconnect.addListener(() => {
+        keepAlivePort = null;
+        if (state.isGenerating) {
+          setTimeout(startKeepAlive, 1000);
+        }
+      });
+
+      keepAlivePort.onMessage.addListener((msg) => {
+        handleIncomingMessage(msg);
+      });
+
+      // 20s heartbeat ping to keep MV3 service worker active
+      heartbeatTimer = setInterval(() => {
+        if (keepAlivePort) {
+          keepAlivePort.postMessage({ type: 'HEARTBEAT', timestamp: Date.now() });
+        }
+      }, 20000);
+    } catch (e) {
+      console.warn('[RenderX] KeepAlive connection note:', e);
+    }
+  }
+
+  function stopKeepAlive() {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    if (keepAlivePort) {
+      try { keepAlivePort.disconnect(); } catch (e) {}
+      keepAlivePort = null;
+    }
+  }
+
+  // ================= 2. Dual Engine Switching =================
   function setEngine(engine) {
     state.engine = engine;
 
@@ -182,16 +227,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ================= 2. Split Screen Docking =================
-  if (btnArrangeSplit) {
-    btnArrangeSplit.addEventListener('click', () => {
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ type: 'ARRANGE_SPLIT_SCREEN' }, () => {
-          showToast('Workspace arranged: Left 28% Google | Right 72% Studio', 3500);
-        });
-      } else {
-        showToast('Running in standalone browser tab mode');
-      }
+  // Side Panel Info Button
+  if (btnSidePanelInfo) {
+    btnSidePanelInfo.addEventListener('click', () => {
+      showToast('RenderX is docked directly in Chrome Side Panel');
     });
   }
 
@@ -207,6 +246,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (infoGeminiState) infoGeminiState.textContent = res.geminiConnected ? 'Connected (Active Tab)' : 'Ready (Auto-Launch)';
         if (infoFlowState) infoFlowState.textContent = res.flowConnected ? 'Connected (Active Tab)' : 'Ready (Auto-Launch)';
+      }
+    });
+
+    // Restore Persisted Queue State if SW was restarted
+    chrome.runtime.sendMessage({ type: 'GET_PERSISTED_QUEUE' }, (res) => {
+      if (res && res.success && res.queue && res.queue.items && res.queue.items.length > 0) {
+        const q = res.queue;
+        if (q.isQueueRunning) {
+          state.items = q.items;
+          state.isGenerating = true;
+          state.engine = q.currentEngine || 'gemini-canvas';
+          state.subMode = q.currentSubMode || 'image';
+          renderLiveGrid(state.items);
+
+          state.items.forEach(i => {
+            if (i.status === 'done' && i.dataUrl) {
+              updateCardCompleted(i);
+            } else if (i.status === 'failed') {
+              updateCardFailed(i.index, i.error || 'Failed');
+            } else if (i.index === q.currentShotIndex) {
+              updateCardStatus(i.index, 'Generating...');
+            }
+          });
+
+          updateOverallProgress();
+          startKeepAlive();
+          if (generateBatchBtn) generateBatchBtn.disabled = true;
+          if (stopBatchBtn) stopBatchBtn.disabled = false;
+          showToast('Resumed active queue from local storage');
+        }
       }
     });
   }
@@ -302,7 +371,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let timestamp = `00.${String(idx * 4).padStart(2, '0')} - 00.${String((idx + 1) * 4).padStart(2, '0')}`;
         let cleanPrompt = line;
 
-        // Extract explicit timestamp if present
+        // Extract timestamp if present: e.g. "00.00-04.35 | Scene 1: ..."
         const match = line.match(/^([0-9.:\-\s]+)\s*\|\s*(.+)$/);
         if (match) {
           timestamp = match[1].trim();
@@ -493,6 +562,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (progressBarFill) progressBarFill.style.width = '0%';
     if (downloadZipBtn) downloadZipBtn.disabled = true;
     if (downloadZipTopBtn) downloadZipTopBtn.disabled = true;
+
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({ type: 'CLEAR_PERSISTED_QUEUE' });
+    }
   }
 
   if (clearGalleryBtn) {
@@ -570,7 +643,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const badge = document.getElementById(`badge-${index}`);
     if (badge) {
       badge.className = 'badge-generating';
-      badge.textContent = 'Generating...';
+      badge.textContent = statusText.includes('Attempt') ? statusText : 'Generating...';
     }
   }
 
@@ -676,6 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (progressBarFill) progressBarFill.style.width = '0%';
 
     renderLiveGrid(state.items);
+    startKeepAlive();
     showToast(`Starting ${state.items.length} shots via ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'}...`, 2500);
 
     // Send queue to background service worker
@@ -702,31 +776,44 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.runtime.sendMessage({ type: 'STOP_BATCH_QUEUE' });
       }
       state.isGenerating = false;
+      stopKeepAlive();
       if (generateBatchBtn) generateBatchBtn.disabled = false;
       if (stopBatchBtn) stopBatchBtn.disabled = true;
       showToast('Generation halted');
     });
   }
 
-  // Receive Background Messages
+  // Receive Background Messages (via Runtime & Ports)
+  function handleIncomingMessage(msg) {
+    if (!msg) return;
+
+    if (msg.type === 'ITEM_STATUS_UPDATE' || msg.type === 'ITEM_STATUS') {
+      updateCardStatus(msg.index, msg.status);
+    } else if (msg.type === 'ITEM_STARTED') {
+      updateCardStatus(msg.index, 'Generating...');
+    } else if (msg.type === 'ITEM_COMPLETED') {
+      const item = state.items.find(i => i.index === msg.index);
+      if (item) {
+        item.dataUrl = msg.dataUrl;
+        item.status = 'done';
+        updateCardCompleted(item);
+      }
+      updateOverallProgress();
+    } else if (msg.type === 'ITEM_FAILED') {
+      const item = state.items.find(i => i.index === msg.index);
+      if (item) {
+        item.status = 'failed';
+      }
+      updateCardFailed(msg.index, msg.error || 'Automation timeout');
+      updateOverallProgress();
+    } else if (msg.type === 'QUEUE_FINISHED') {
+      finishQueue();
+    }
+  }
+
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
-      if (msg.type === 'ITEM_STATUS') {
-        updateCardStatus(msg.index, msg.status);
-      } else if (msg.type === 'ITEM_COMPLETED') {
-        const item = state.items.find(i => i.index === msg.index);
-        if (item) {
-          item.dataUrl = msg.dataUrl;
-          item.status = 'done';
-          updateCardCompleted(item);
-        }
-        updateOverallProgress();
-      } else if (msg.type === 'ITEM_FAILED') {
-        updateCardFailed(msg.index, msg.error || 'Automation timeout');
-        updateOverallProgress();
-      } else if (msg.type === 'QUEUE_FINISHED') {
-        finishQueue();
-      }
+      handleIncomingMessage(msg);
     });
   }
 
@@ -742,6 +829,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function finishQueue() {
     state.isGenerating = false;
+    stopKeepAlive();
     if (generateBatchBtn) generateBatchBtn.disabled = false;
     if (stopBatchBtn) stopBatchBtn.disabled = true;
     if (downloadZipBtn) downloadZipBtn.disabled = false;
@@ -765,13 +853,11 @@ document.addEventListener('DOMContentLoaded', () => {
       updateCardStatus(item.index, 'Rendering canvas...');
 
       setTimeout(() => {
-        // Generate SVG canvas test visual
         const canvas = document.createElement('canvas');
         canvas.width = (state.aspectRatio === '16:9') ? 854 : ((state.aspectRatio === '9:16') ? 480 : 640);
         canvas.height = (state.aspectRatio === '16:9') ? 480 : ((state.aspectRatio === '9:16') ? 854 : 640);
         const ctx = canvas.getContext('2d');
 
-        // Draw gradient background
         const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
         grad.addColorStop(0, '#0F172A');
         grad.addColorStop(0.5, '#1E1B4B');
@@ -779,7 +865,6 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Draw title & metadata
         ctx.fillStyle = '#38BDF8';
         ctx.font = 'bold 24px Inter, sans-serif';
         ctx.fillText(`Shot #0${item.index}: ${item.timestamp}`, 30, 60);
@@ -825,6 +910,7 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast(`Re-rolling Shot #${index}...`);
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage && item) {
           updateCardStatus(index, 'Retrying...');
+          startKeepAlive();
           chrome.runtime.sendMessage({
             type: 'START_BATCH_QUEUE',
             items: [item],
@@ -838,7 +924,6 @@ document.addEventListener('DOMContentLoaded', () => {
           state.subMode = 'image-to-video';
           state.flowReferenceImage = item.dataUrl;
 
-          // Select submode pill
           if (flowSubmodeBtnRow) {
             flowSubmodeBtnRow.querySelectorAll('.btn-submode-opt').forEach(b => {
               b.classList.toggle('active', b.dataset.submode === 'image-to-video');
