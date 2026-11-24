@@ -101,6 +101,15 @@
               <div class="cluster-profiles-strip" id="clusterProfilesStrip"></div>
             </div>
 
+            <!-- Project Name & Create Project Option -->
+            <div style="display:flex; align-items:center; gap:6px; margin-top:2px;">
+              <input type="text" id="projectNameInput" class="rx-text-input" placeholder="Project File Name (e.g. Mars_Reel_01)" value="RenderX_Project_01" style="flex:1; padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+              <label style="display:flex; align-items:center; gap:4px; font-size:9.5px; color:#38BDF8; font-weight:700; white-space:nowrap; cursor:pointer;" title="Create a fresh Google Flow project for this run">
+                <input type="checkbox" id="createProjectToggle" checked style="accent-color:#38BDF8;">
+                <span>🆕 Create Project</span>
+              </label>
+            </div>
+
             <!-- Google Flow Sub-Modes (Visible when Google Flow is selected) -->
             <div class="flow-submodes-wrap" id="flowSubmodesWrap" style="display: none;">
               <label class="input-label">Flow Pipeline Mode</label>
