@@ -395,8 +395,62 @@ body {
 /* Engine Switcher in Box 1 */
 .engine-switch-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr auto;
   gap: 6px;
+}
+
+.btn-engine-ok {
+  background: #0B101E;
+  border: 1px solid #334155;
+  border-radius: var(--radius-xs);
+  color: #CBD5E1;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 52px;
+  transition: all 0.15s ease;
+}
+
+.btn-engine-ok:hover {
+  border-color: #64748B;
+  color: #FFFFFF;
+}
+
+.ok-signal-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #F59E0B;
+  box-shadow: 0 0 6px #F59E0B;
+}
+
+.btn-engine-ok.signal-green {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: #10B981;
+  color: #34D399;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.25);
+}
+
+.btn-engine-ok.signal-green .ok-signal-dot {
+  background: #10B981;
+  box-shadow: 0 0 8px #10B981;
+}
+
+.btn-engine-ok.signal-red {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: #EF4444;
+  color: #F87171;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.25);
+}
+
+.btn-engine-ok.signal-red .ok-signal-dot {
+  background: #EF4444;
+  box-shadow: 0 0 8px #EF4444;
 }
 
 .btn-engine-opt {
@@ -454,6 +508,16 @@ body {
 
 .cluster-status-val.connected {
   color: var(--accent-green);
+  font-weight: 800;
+}
+
+.cluster-status-val.reconnecting {
+  color: #F59E0B;
+  font-weight: 800;
+}
+
+.cluster-status-val.disconnected {
+  color: #F87171;
   font-weight: 800;
 }
 
