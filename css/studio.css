@@ -210,6 +210,7 @@ body {
   border-radius: var(--radius-md);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+  height: auto;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -265,6 +266,26 @@ body {
   flex-direction: column;
   gap: 8px;
   background: #080C16;
+  height: auto;
+  overflow: visible;
+}
+
+.btn-subtle {
+  background: #0B101E;
+  border: 1px solid #1E293B;
+  border-radius: var(--radius-xs);
+  color: #94A3B8;
+  font-size: 9.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 3px 7px;
+  transition: all 0.15s ease;
+}
+
+.btn-subtle:hover {
+  background: #1E293B;
+  color: #FFFFFF;
+  border-color: #38BDF8;
 }
 
 .rx-helper-text {
