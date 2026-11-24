@@ -1,10 +1,11 @@
 /**
- * RenderX Image Studio - v1.0.4 Application Controller
+ * RenderX Image Studio - v1.0.5 PRO Application Controller
  * High-speed Bulk Image Generator with 4-Column Layout, 3-Button Cards & Resilient Canvas Engine
+ * Always-Open Spacious Sidebar with Mouse Wheel Smooth Scrolling
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const GEMINI_CANVAS_URL = 'https://gemini.google.com/share/f8350ff50be0';
+  const GEMINI_CANVAS_URL = 'https://share.gemini.google/cTnZQ3bpoER7';
 
   // Application State
   const state = {
@@ -220,16 +221,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // ================= Accordion Collapsible Box System =================
-  document.querySelectorAll('.rx-box-header[data-toggle="collapse"]').forEach(header => {
-    header.addEventListener('click', (e) => {
-      if (e.target.closest('input') || e.target.closest('button')) return;
-      const box = header.closest('.rx-box');
-      if (box) {
-        box.classList.toggle('collapsed');
+  // Listen for live Canvas ready signals from content script
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg) => {
+      if (msg && msg.type === 'RENDERX_CANVAS_READY') {
+        if (canvasClusterStatus) {
+          canvasClusterStatus.textContent = '🟢 Connected (acc1 / Live Canvas)';
+          canvasClusterStatus.style.color = '#10B981';
+        }
       }
     });
-  });
+  }
 
   // ================= Cookie Management =================
   if (toggleCookieBtn && cookieSubpanel) {
