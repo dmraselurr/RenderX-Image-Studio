@@ -7,28 +7,25 @@
   <link rel="stylesheet" href="css/studio.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 
   <!-- Top Navigation Bar -->
   <header class="topbar">
     <div class="logo-group">
-      <!-- Original RenderX Red/Black RX Logo -->
-      <div class="logo-icon-svg" title="RenderX Studio">
+      <!-- Exact RenderX Red/Black RX Logo from Desktop Shortcut -->
+      <div class="rx-logo-wrapper" title="RenderX Studio">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" width="28" height="28">
-          <rect width="36" height="36" rx="9" fill="#0B0F19" stroke="#FF003F" stroke-width="2"/>
-          <text x="4" y="25" fill="#FFFFFF" font-size="22" font-weight="900" font-family="'Inter', system-ui, sans-serif">R</text>
-          <text x="20" y="29" fill="#FF003F" font-size="16" font-weight="900" font-family="'Inter', system-ui, sans-serif">x</text>
+          <rect width="36" height="36" rx="8" fill="#080A10" stroke="#FF1E56" stroke-width="2.5"/>
+          <text x="4" y="25" fill="#FFFFFF" font-size="22" font-weight="900" font-family="'Arial Black', 'Inter', sans-serif">R</text>
+          <text x="20" y="29" fill="#FF1E56" font-size="16" font-weight="900" font-family="'Arial Black', 'Inter', sans-serif">x</text>
         </svg>
       </div>
 
       <div class="logo-text">
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <h1>RenderX Image Studio</h1>
-          <span class="badge-version">v1.0.1</span>
-        </div>
-        <p>AI Video Timeline & Consistency Generator</p>
+        <h1>RenderX Image Studio <span class="badge-version">v1.0.2 PRO</span></h1>
+        <p>AI Video Timeline &amp; Consistency Generator</p>
       </div>
     </div>
 
@@ -41,14 +38,14 @@
 
       <!-- Settings / API Keys Modal Trigger -->
       <button class="btn-icon" id="openSettingsBtn" title="API Keys & Engine Settings">
-        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
         </svg>
       </button>
 
       <!-- Global Reset Button -->
       <button class="btn-icon danger" id="globalResetBtn" title="Reset All (Clear Prompts & Gallery)">
-        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
         </svg>
       </button>
@@ -58,154 +55,158 @@
   <!-- Workspace Container -->
   <div class="workspace">
 
-    <!-- Left Sidebar: Compact ~265px Width — 4 Structured Boxes -->
+    <!-- Left Sidebar: ~270px Width — RenderX Pro Style Solid Highlighted Boxes -->
     <aside class="sidebar">
       <div class="sidebar-scroll">
 
-        <!-- Box 1: AI ENGINE & FORMAT -->
-        <div class="section-card">
-          <div class="section-header">
-            <span class="section-title">
-              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-              AI ENGINE &amp; FORMAT
+        <!-- Box 1: ENGINE & ASPECT RATIO -->
+        <div class="rx-box">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>⚙️</span><span>ENGINE &amp; ASPECT RATIO</span>
             </span>
           </div>
-
-          <label class="input-label" for="engineSelect">Primary AI Engine</label>
-          <select id="engineSelect" class="select-control">
-            <option value="gemini-canvas" selected>Gemini Canvas (Free Google Session)</option>
-            <option value="google-aistudio">Google AI Studio (Imagen 3 API)</option>
-            <option value="pollinations-flux">Free Options (FLUX.1 / Serverless)</option>
-          </select>
-
-          <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between;">
-            <span style="font-size: 10.5px; color: var(--text-muted); font-weight: 500;">Auto-Fallback on Error</span>
-            <label class="switch">
-              <input type="checkbox" id="autoFallbackToggle" checked>
-              <span class="slider"></span>
-            </label>
-          </div>
-
-          <div style="margin-top: 8px;">
-            <label class="input-label" for="aspectRatioSelect">Aspect Ratio</label>
-            <select id="aspectRatioSelect" class="select-control">
-              <option value="landscape" selected>16:9 Long (1792x1024 - Video)</option>
-              <option value="portrait">9:16 Short (1024x1792 - Shorts/Reels)</option>
-              <option value="square">1:1 Square (1536x1536 - Square)</option>
+          <div class="rx-box-body">
+            <label class="input-label" for="engineSelect">Primary AI Engine</label>
+            <select id="engineSelect" class="select-control">
+              <option value="gemini-canvas" selected>Free Canvas (acc1-7 Cluster)</option>
+              <option value="google-aistudio">Direct API (Google AI Studio)</option>
+              <option value="pollinations-flux">Free Serverless (FLUX.1)</option>
             </select>
+
+            <!-- Gemini Canvas Session Cluster Status & Connect Bar -->
+            <div class="canvas-cluster-bar" id="canvasClusterBox">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <span style="font-size:9.5px; font-weight:700; color:#94A3B8;">ACTIVE CANVAS CLUSTER:</span>
+                <span id="canvasClusterStatus" style="font-size:9.5px; color:#10B981; font-weight:800;">🟢 Connected</span>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button type="button" id="openCanvasTabBtn" class="btn-canvas-connect" title="Open or Connect Gemini Canvas Session">
+                  <span>🔑 Open Canvas</span>
+                </button>
+                <button type="button" id="refreshCanvasTabBtn" class="btn-canvas-refresh" title="Recheck Connection">
+                  <span>🔄</span>
+                </button>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 4px;">
+              <span style="font-size: 10px; color: var(--text-muted); font-weight: 600;">Auto-Fallback on Error</span>
+              <label class="switch">
+                <input type="checkbox" id="autoFallbackToggle" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <!-- Aspect Ratio Selector Buttons (16:9, 9:16, 1:1) -->
+            <div style="margin-top: 4px;">
+              <span class="input-label">ASPECT RATIO:</span>
+              <div class="aspect-btn-group" id="aspectBtnGroup">
+                <button type="button" class="btn-aspect active" data-aspect="landscape">16:9 Long</button>
+                <button type="button" class="btn-aspect" data-aspect="portrait">9:16 Short</button>
+                <button type="button" class="btn-aspect" data-aspect="square">1:1 Square</button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Box 2: CHARACTER LOCK -->
-        <div class="section-card">
-          <div class="section-header">
-            <span class="section-title">
-              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-              CHARACTER LOCK
+        <!-- Box 2: CHARACTER CONSISTENCY -->
+        <div class="rx-box">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>👤</span><span>CHARACTER CONSISTENCY</span>
             </span>
-            <label class="switch">
+            <label style="display:flex; align-items:center; gap:4px; font-size:9.5px; color:#38BDF8; font-weight:700; cursor:pointer;">
               <input type="checkbox" id="charLockToggle">
-              <span class="slider"></span>
+              <span>ACTIVE</span>
             </label>
           </div>
-
-          <p class="section-helper">
-            Optional: Lock facial features or subject traits across all generated images.
-          </p>
-
-          <div class="upload-row">
-            <div class="upload-thumbnail" id="charThumb" title="Click to upload character reference image">
-              <span class="placeholder-icon">📷</span>
-              <img id="charThumbImg" src="" style="display:none;" alt="Character Reference">
-              <input type="file" id="charFileInput" accept="image/*" style="display:none;">
-            </div>
-            <div class="upload-meta">
-              <label class="upload-btn-label" for="charFileInput">Upload Character</label>
-              <button class="upload-remove-btn" id="charRemoveBtn">Remove</button>
-            </div>
-          </div>
-
-          <div style="margin-top: 6px;">
+          <div class="rx-box-body">
             <textarea id="charDesc" class="textarea-control" rows="2" placeholder="Describe character appearance (e.g. young man with round glasses, blue jacket)..."></textarea>
+            
+            <div class="upload-row">
+              <div class="upload-thumbnail" id="charThumb" title="Click to upload character reference image">
+                <span class="placeholder-icon">📁</span>
+                <img id="charThumbImg" src="" style="display:none;" alt="Character Reference">
+                <input type="file" id="charFileInput" accept="image/*" style="display:none;">
+              </div>
+              <div class="upload-meta">
+                <label class="upload-btn-label" for="charFileInput">Ref Img</label>
+                <button class="upload-remove-btn" id="charRemoveBtn">Remove</button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <!-- Box 3: STYLE LOCK -->
-        <div class="section-card">
-          <div class="section-header">
-            <span class="section-title">
-              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path></svg>
-              STYLE LOCK
+        <!-- Box 3: STYLE CONSISTENCY -->
+        <div class="rx-box">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>🎨</span><span>STYLE CONSISTENCY</span>
             </span>
-            <label class="switch">
+            <label style="display:flex; align-items:center; gap:4px; font-size:9.5px; color:#A78BFA; font-weight:700; cursor:pointer;">
               <input type="checkbox" id="styleLockToggle">
-              <span class="slider"></span>
+              <span>ACTIVE</span>
             </label>
           </div>
-
-          <p class="section-helper">
-            Optional: Lock artistic medium, camera optics, or visual lighting mood.
-          </p>
-
-          <div class="upload-row">
-            <div class="upload-thumbnail" id="styleThumb" title="Click to upload style reference image">
-              <span class="placeholder-icon">🎨</span>
-              <img id="styleThumbImg" src="" style="display:none;" alt="Style Reference">
-              <input type="file" id="styleFileInput" accept="image/*" style="display:none;">
-            </div>
-            <div class="upload-meta">
-              <label class="upload-btn-label" for="styleFileInput">Upload Style</label>
-              <button class="upload-remove-btn" id="styleRemoveBtn">Remove</button>
-            </div>
-          </div>
-
-          <div style="margin-top: 6px;">
+          <div class="rx-box-body">
             <textarea id="styleDesc" class="textarea-control" rows="2" placeholder="Style directives (e.g. 3D Pixar, vibrant lighting, raytraced reflections)..."></textarea>
+            
+            <div class="upload-row">
+              <div class="upload-thumbnail" id="styleThumb" title="Click to upload style reference image">
+                <span class="placeholder-icon">📁</span>
+                <img id="styleThumbImg" src="" style="display:none;" alt="Style Reference">
+                <input type="file" id="styleFileInput" accept="image/*" style="display:none;">
+              </div>
+              <div class="upload-meta">
+                <label class="upload-btn-label" for="styleFileInput">Style Ref</label>
+                <button class="upload-remove-btn" id="styleRemoveBtn">Remove</button>
+              </div>
+            </div>
           </div>
         </div>
 
         <!-- Box 4: NEGATIVE PROMPTS (1-CLICK AVOID) -->
-        <div class="section-card">
-          <div class="section-header">
-            <span class="section-title">
-              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
-              NEGATIVE PROMPTS (1-CLICK AVOID)
+        <div class="rx-box">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>🚫</span><span>NEGATIVE PROMPTS</span>
             </span>
           </div>
-
-          <div class="chips-container" id="negativeChips">
-            <span class="chip-tag active" data-val="bad anatomy">Bad Anatomy</span>
-            <span class="chip-tag active" data-val="extra fingers">Extra Fingers</span>
-            <span class="chip-tag active" data-val="blurry">Blurry</span>
-            <span class="chip-tag active" data-val="distorted face">Distorted Face</span>
-            <span class="chip-tag active" data-val="low quality">Low Quality</span>
-            <span class="chip-tag" data-val="watermark">Watermark</span>
-            <span class="chip-tag" data-val="text logo">Text / Logo</span>
-            <span class="chip-tag" data-val="deformed limbs">Deformed Limbs</span>
-            <span class="chip-tag" data-val="overexposed">Overexposed</span>
+          <div class="rx-box-body">
+            <div class="chips-container" id="negativeChips">
+              <span class="chip-tag active" data-val="bad anatomy">Bad Anatomy</span>
+              <span class="chip-tag active" data-val="extra fingers">Extra Fingers</span>
+              <span class="chip-tag active" data-val="blurry">Blurry</span>
+              <span class="chip-tag active" data-val="distorted face">Distorted Face</span>
+              <span class="chip-tag active" data-val="low quality">Low Quality</span>
+              <span class="chip-tag" data-val="watermark">Watermark</span>
+              <span class="chip-tag" data-val="text logo">Text / Logo</span>
+              <span class="chip-tag" data-val="deformed limbs">Deformed Limbs</span>
+              <span class="chip-tag" data-val="overexposed">Overexposed</span>
+            </div>
+            <input type="text" id="customNegative" class="input-control" placeholder="Additional avoidance...">
           </div>
-
-          <input type="text" id="customNegative" class="input-control" placeholder="Additional items to avoid...">
         </div>
 
         <!-- Timeline Prompt Box -->
-        <div class="section-card">
-          <div class="prompt-toolbar">
-            <span class="section-title">
-              <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h7"></path></svg>
-              TIMELINE PROMPTS
+        <div class="rx-box">
+          <div class="rx-box-header">
+            <span class="rx-box-title">
+              <span>⏱️</span><span>TIMELINE PROMPTS</span>
             </span>
             <div style="display: flex; align-items: center; gap: 6px;">
               <button class="btn-subtle" id="autoFormatBtn" title="Auto-format timeline with clean 1-line gaps">⚡ Auto Sync</button>
               <span class="line-counter" id="promptCount">0</span>
             </div>
           </div>
-
-          <textarea id="bulkPrompts" class="textarea-control" rows="5" placeholder="00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion...&#10;02.50-08.59 | Scene 2: Cinematic Close-Up detail shot...&#10;08.59-16.42 | Scene 3: Extreme Wide Establishing Angle..."></textarea>
-          
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
-            <button class="btn-subtle" id="loadSamplePromptsBtn" style="font-size: 9.5px; padding: 2px 5px;">Load Sample Script</button>
-            <span style="font-size: 9.5px; color: var(--text-dim);">1 prompt per line</span>
+          <div class="rx-box-body">
+            <textarea id="bulkPrompts" class="textarea-control" rows="5" placeholder="00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion...&#10;02.50-08.59 | Scene 2: Cinematic Close-Up detail shot...&#10;08.59-16.42 | Scene 3: Extreme Wide Establishing Angle...&#10;16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing..."></textarea>
+            
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2px;">
+              <button class="btn-subtle" id="loadSamplePromptsBtn" style="font-size: 9px; padding: 2px 5px;">Load Sample Script</button>
+              <span style="font-size: 9px; color: var(--text-dim);">1 prompt per line</span>
+            </div>
           </div>
         </div>
 
@@ -214,7 +215,7 @@
       <!-- Bottom Action Buttons -->
       <div class="sidebar-footer">
         <button class="btn-primary" id="generateAllBtn">
-          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
           <span id="generateBtnText">Generate Images</span>
         </button>
 
@@ -225,7 +226,7 @@
       </div>
     </aside>
 
-    <!-- Right Main Canvas: 5-Column Grid -->
+    <!-- Right Main Canvas: 4-Column Responsive Grid -->
     <main class="main-canvas">
       <!-- Canvas Status & Filter Toolbar -->
       <div class="canvas-toolbar">
@@ -241,20 +242,25 @@
         </div>
 
         <div class="canvas-actions">
-          <button class="btn-card-action" id="clearGalleryBtn">Clear Gallery</button>
+          <button class="btn-card-action" id="clearGalleryBtn" style="color: #EF4444; border-color: rgba(239, 68, 68, 0.4);">🗑️ Clear Gallery</button>
         </div>
       </div>
 
-      <!-- 5-Column Gallery Grid -->
+      <!-- 4-Column Gallery Grid (Always 4 Columns per Row) -->
       <div class="gallery-container">
         <div class="gallery-grid" id="galleryGrid">
-          <!-- Default Row 1: Exactly 5 Dummy Boxes -->
+          <!-- Default Row 1: Exactly 4 Dummy Boxes on 1 Line -->
           <div class="dummy-card">
             <div class="dummy-preview">
-              <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">00.00 - 04.35</span>
-              <span style="font-size: 10px; color: #64748B;">Shot #1 Standby</span>
+              <span class="timestamp-badge">00.00 - 04.35</span>
+              <span class="card-index">#01</span>
+              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #1 Ready</span>
             </div>
             <div class="dummy-meta">
+              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 01_00.00-04.35.png</span>
+              </div>
               <div class="dummy-line" style="width: 80%;"></div>
               <div class="dummy-line" style="width: 50%;"></div>
             </div>
@@ -262,10 +268,15 @@
 
           <div class="dummy-card">
             <div class="dummy-preview">
-              <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">04.35 - 07.83</span>
-              <span style="font-size: 10px; color: #64748B;">Shot #2 Standby</span>
+              <span class="timestamp-badge">04.35 - 07.83</span>
+              <span class="card-index">#02</span>
+              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #2 Ready</span>
             </div>
             <div class="dummy-meta">
+              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 02_04.35-07.83.png</span>
+              </div>
               <div class="dummy-line" style="width: 70%;"></div>
               <div class="dummy-line" style="width: 40%;"></div>
             </div>
@@ -273,10 +284,15 @@
 
           <div class="dummy-card">
             <div class="dummy-preview">
-              <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">07.83 - 11.74</span>
-              <span style="font-size: 10px; color: #64748B;">Shot #3 Standby</span>
+              <span class="timestamp-badge">07.83 - 11.74</span>
+              <span class="card-index">#03</span>
+              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #3 Ready</span>
             </div>
             <div class="dummy-meta">
+              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 03_07.83-11.74.png</span>
+              </div>
               <div class="dummy-line" style="width: 85%;"></div>
               <div class="dummy-line" style="width: 55%;"></div>
             </div>
@@ -284,30 +300,24 @@
 
           <div class="dummy-card">
             <div class="dummy-preview">
-              <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">11.74 - 16.52</span>
-              <span style="font-size: 10px; color: #64748B;">Shot #4 Standby</span>
+              <span class="timestamp-badge">11.74 - 16.52</span>
+              <span class="card-index">#04</span>
+              <div style="font-size: 20px; color: #38BDF8; margin-top: 10px;">🖼️</div>
+              <span style="font-size: 9.5px; color: #64748B; font-weight: 700;">Shot #4 Ready</span>
             </div>
             <div class="dummy-meta">
+              <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
+                <span style="font-size:8.5px; color:#10B981; font-family:var(--font-mono); font-weight:700;">📁 04_11.74-16.52.png</span>
+              </div>
               <div class="dummy-line" style="width: 75%;"></div>
               <div class="dummy-line" style="width: 45%;"></div>
             </div>
           </div>
 
-          <div class="dummy-card">
-            <div class="dummy-preview">
-              <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">16.52 - 19.13</span>
-              <span style="font-size: 10px; color: #64748B;">Shot #5 Standby</span>
-            </div>
-            <div class="dummy-meta">
-              <div class="dummy-line" style="width: 90%;"></div>
-              <div class="dummy-line" style="width: 60%;"></div>
-            </div>
-          </div>
-
-          <!-- Row 2: Down Arrow Indicator (Indicating Continuation Below) -->
+          <!-- Row 2: Prominent Centered Down Arrow Indicator -->
           <div class="dummy-continuation-row">
             <div class="dummy-arrow-circle">↓</div>
-            <span class="dummy-continuation-text">Standby: Images will populate dynamically upon generation</span>
+            <span class="dummy-continuation-text">Standby: Images will populate dynamically in 4-column rows upon generation</span>
           </div>
         </div>
       </div>
@@ -327,14 +337,14 @@
         <div>
           <label class="input-label" for="settingGoogleKey">Google AI Studio API Key (Option 2 Fallback)</label>
           <input type="password" id="settingGoogleKey" class="input-control" placeholder="AIzaSy...">
-          <p style="font-size: 9.5px; color: var(--text-dim); margin-top: 3px;">Used as 2nd fallback when Canvas exhausts retries.</p>
+          <p style="font-size: 9px; color: var(--text-dim); margin-top: 3px;">Used as fallback when Canvas exhausts retries.</p>
         </div>
 
         <div>
           <label class="input-label" for="settingConcurrency">Generation Concurrency</label>
           <select id="settingConcurrency" class="select-control">
-            <option value="3" selected>Balanced (3 concurrent requests)</option>
-            <option value="5">Turbo (5 parallel requests)</option>
+            <option value="3" selected>Balanced (3 concurrent scenes)</option>
+            <option value="4">Turbo (4 parallel scenes)</option>
             <option value="1">Sequential (1-by-1 safe)</option>
           </select>
         </div>
@@ -357,8 +367,8 @@
       </div>
 
       <div class="lightbox-details">
-        <p id="lightboxPrompt" style="font-size: 11px; color: var(--text-muted); flex: 1; margin-right: 12px;"></p>
-        <button class="btn-secondary" id="lightboxDownloadBtn" style="width: auto; padding: 6px 12px;">Download Image</button>
+        <p id="lightboxPrompt" style="font-size: 10.5px; color: var(--text-muted); flex: 1; margin-right: 12px;"></p>
+        <button class="btn-secondary" id="lightboxDownloadBtn" style="width: auto; padding: 5px 10px;">Download Scene</button>
       </div>
     </div>
   </div>
