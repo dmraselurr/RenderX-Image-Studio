@@ -1,8 +1,8 @@
 /**
- * RenderX Image Studio - Zero-Tab Direct RPC & API Engine (Manifest V3)
- * 70vw In-Browser Dock + MV3 Keep-Alive + webRequest Protocol Capture
- * Gemini Canvas (Direct batchexecute q4uTj Pool) & Google Flow (Direct aisandbox-pa Pool)
- * ZERO chrome.tabs.create during generation | ZERO main chat clutter
+ * RenderX Image Studio - Zero-Tab Direct RPC & 70vw Dock Engine (Manifest V3)
+ * - Always opens as 70vw Right-Side Dock leaving Left 30vw for live Google Session
+ * - Auto-syncs Shot #1 via open left-pane session & runs Shots #2..N via 20-way Direct Fetch Pool
+ * - ZERO chrome.tabs.create during generation | ZERO main chat clutter
  */
 
 const DIRECT_FETCH_CONCURRENCY = 20;
@@ -18,22 +18,35 @@ let currentShotIndex = 0;
 const globalCapturedImages = new Set();
 const batchItemsByIndex = new Map();
 const connectedPorts = new Set();
+const dockedTabIds = new Set();
 
 let reqSeqCounter = Math.floor(100000 + Math.random() * 800000);
 let lastDispatchTime = 0;
 let dispatchMutex = Promise.resolve();
 
-// In-memory + persisted protocol caches
-let q4uTjTemplate = null;     // { url, sourcePath, bl, fsid, at, fReqRaw, promptHint, aspectRatioHint, updatedAt }
+let q4uTjTemplate = null;
 let lastCanvasPromptHint = '';
 let lastCanvasAspectHint = 'square';
-let flowAuthContext = null;   // { authorization, apiKey, projectId, endpointTemplate, bodyTemplate, siteKey, updatedAt }
+let flowAuthContext = null;
 
-// Hydrate saved templates on SW startup
-chrome.storage.local.get(['renderx_q4utj_template', 'renderx_flow_auth']).then((data) => {
+// Hydrate saved state on SW startup
+chrome.storage.local.get([
+  'renderx_q4utj_template',
+  'renderx_flow_auth',
+  'renderx_docked_tabs',
+  'renderx_selected_engine'
+]).then((data) => {
   if (data?.renderx_q4utj_template) q4uTjTemplate = data.renderx_q4utj_template;
   if (data?.renderx_flow_auth) flowAuthContext = data.renderx_flow_auth;
+  if (Array.isArray(data?.renderx_docked_tabs)) {
+    data.renderx_docked_tabs.forEach(id => dockedTabIds.add(id));
+  }
+  if (data?.renderx_selected_engine) currentEngine = data.renderx_selected_engine;
 }).catch(() => {});
+
+function persistDockedTabs() {
+  chrome.storage.local.set({ renderx_docked_tabs: Array.from(dockedTabIds) }).catch(() => {});
+}
 
 // ================= 1. MV3 Keep-Alive Port =================
 chrome.runtime.onConnect.addListener((port) => {
@@ -48,36 +61,76 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 });
 
-// ================= 2. 70vw In-Browser Dock Injector =================
-chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab || !tab.id) return;
+// ================= 2. 70vw Dock Management (Never Full-Width) =================
+function getTargetHostUrl(engine) {
+  return (engine === 'google-flow')
+    ? 'https://flow.google.com'
+    : 'https://gemini.google.com/share/f8350ff50be0';
+}
 
-  const url = tab.url || '';
-  const isRestricted = url.startsWith('chrome://') ||
+function isRestrictedUrl(url = '') {
+  return !url ||
+    url.startsWith('chrome://') ||
     url.startsWith('edge://') ||
     url.startsWith('about:') ||
     url.startsWith('chrome-extension://') ||
     url.includes('chrome.google.com/webstore') ||
     url.includes('chromewebstore.google.com');
+}
 
-  if (isRestricted) {
-    // Update the current restricted blank tab directly (no extra tab spawned)
-    try {
-      await chrome.tabs.update(tab.id, { url: chrome.runtime.getURL('dashboard.html') });
-    } catch (err) {
-      console.error('[RenderX] Cannot navigate restricted tab:', err);
-    }
-    return;
+function isEngineHostUrl(url = '', engine) {
+  if (engine === 'google-flow') {
+    return url.includes('flow.google.com') || url.includes('flow.google') || url.includes('labs.google') || url.includes('aitestkitchen.withgoogle.com');
   }
+  return url.includes('gemini.google.com');
+}
 
+async function mountDockOnTab(tabId) {
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       files: ['overlay_injector.js']
     });
   } catch (err) {
-    console.error('[RenderX] Failed to inject 70vw dock overlay:', err);
+    console.warn('[RenderX] Could not inject overlay_injector on tab', tabId, err.message);
   }
+}
+
+// Re-inject 70vw dock automatically when a docked host tab finishes loading/switching engine
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && dockedTabIds.has(tabId) && tab && !isRestrictedUrl(tab.url)) {
+    setTimeout(() => mountDockOnTab(tabId), 600);
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (dockedTabIds.delete(tabId)) {
+    persistDockedTabs();
+  }
+});
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!tab || !tab.id) return;
+
+  const url = tab.url || '';
+  dockedTabIds.add(tab.id);
+  persistDockedTabs();
+
+  // Never stay in a restricted/full-width extension tab — move this tab to the active Google host so 30vw left + 70vw dock mounts cleanly
+  if (isRestrictedUrl(url)) {
+    const targetUrl = getTargetHostUrl(currentEngine);
+    await chrome.tabs.update(tab.id, { url: targetUrl });
+    return;
+  }
+
+  // If on an unrelated non-Google site and neither engine is synced yet, open the Google session on this same tab with 70vw dock
+  if (!isEngineHostUrl(url, currentEngine)) {
+    const targetUrl = getTargetHostUrl(currentEngine);
+    await chrome.tabs.update(tab.id, { url: targetUrl });
+    return;
+  }
+
+  await mountDockOnTab(tab.id);
 });
 
 // ================= 3. Passive webRequest Protocol Sniffers =================
@@ -125,14 +178,17 @@ function saveCapturedQ4uTj(urlStr, bodyStr, promptHint = '') {
     };
 
     chrome.storage.local.set({ renderx_q4utj_template: q4uTjTemplate }).catch(() => {});
-    console.log('[RenderX] Captured live Gemini Canvas q4uTj RPC template!');
+    broadcastToDashboard({
+      type: 'SYNC_STATUS_UPDATED',
+      geminiSynced: true,
+      flowSynced: Boolean(flowAuthContext?.authorization && flowAuthContext?.projectId)
+    });
     return true;
   } catch (e) {
     return false;
   }
 }
 
-// Listen for Gemini batchexecute q4uTj requests & Flow aisandbox-pa requests
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (details.url.includes('batchexecute') && details.url.includes('q4uTj')) {
@@ -155,7 +211,7 @@ chrome.webRequest.onBeforeRequest.addListener(
         ...(flowAuthContext || {}),
         projectId,
         lastEndpoint: details.url,
-        bodyTemplate: details.url.includes('batchGenerateImages') || details.url.includes('runImageFx')
+        bodyTemplate: (details.url.includes('batchGenerateImages') || details.url.includes('runImageFx'))
           ? (bodyJson || (flowAuthContext && flowAuthContext.bodyTemplate))
           : (flowAuthContext && flowAuthContext.bodyTemplate) || bodyJson,
         updatedAt: Date.now()
@@ -190,6 +246,13 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
         updatedAt: Date.now()
       };
       chrome.storage.local.set({ renderx_flow_auth: flowAuthContext }).catch(() => {});
+      if (flowAuthContext.authorization && flowAuthContext.projectId) {
+        broadcastToDashboard({
+          type: 'SYNC_STATUS_UPDATED',
+          geminiSynced: Boolean(q4uTjTemplate?.fReqRaw),
+          flowSynced: true
+        });
+      }
     }
   },
   {
@@ -198,7 +261,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders']
 );
 
-// ================= 4. Prompt Sanitizer & Queue Persistence =================
+// ================= 4. Prompt Sanitizer & State Persistence =================
 async function persistQueueState() {
   try {
     await chrome.storage.local.set({
@@ -258,11 +321,7 @@ function acquireMicroSlot() {
   return next;
 }
 
-// ================= 5. Gemini Canvas Direct RPC Engine (q4uTj) =================
-
-/**
- * Fetch fresh bl, f.sid, and SNlM0e ('at') silently in background (0 tabs!)
- */
+// ================= 5. Gemini Canvas Engine (q4uTj Direct + Left-Pane Sync/Fallback) =================
 async function refreshGeminiSessionMeta(sourcePath = '/share/f8350ff50be0') {
   try {
     const targetUrl = `https://gemini.google.com${sourcePath.startsWith('/') ? sourcePath : '/' + sourcePath}`;
@@ -282,45 +341,25 @@ async function refreshGeminiSessionMeta(sourcePath = '/share/f8350ff50be0') {
   }
 }
 
-/**
- * If q4uTj template is not cached yet, silently probe an ALREADY-OPEN Canvas share tab (never opens new tabs!)
- */
-async function ensureQ4uTjTemplateAvailable() {
-  if (q4uTjTemplate && q4uTjTemplate.fReqRaw) return q4uTjTemplate;
-
-  const stored = await chrome.storage.local.get('renderx_q4utj_template');
-  if (stored?.renderx_q4utj_template?.fReqRaw) {
-    q4uTjTemplate = stored.renderx_q4utj_template;
-    return q4uTjTemplate;
+async function runLeftPaneCanvasTurn(item) {
+  const shareTabs = await chrome.tabs.query({ url: 'https://gemini.google.com/share/*' });
+  if (!shareTabs || shareTabs.length === 0) {
+    throw new Error('Gemini Canvas page not open on the left pane. Click the RenderX toolbar icon on gemini.google.com/share/f8350ff50be0.');
   }
 
-  // Check if user already has a gemini.google.com/share/* tab open (zero new tabs created!)
-  const existingShareTabs = await chrome.tabs.query({ url: 'https://gemini.google.com/share/*' });
-  if (existingShareTabs && existingShareTabs.length > 0) {
-    for (const tab of existingShareTabs) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, {
-          type: 'PROBE_CANVAS_IFRAME',
-          probePrompt: 'minimalist white geometric sphere on dark navy background'
-        });
+  const promptText = sanitizePromptForEngine(item.fullPrompt || item.rawPrompt);
+  const res = await chrome.tabs.sendMessage(shareTabs[0].id, {
+    type: 'RUN_CANVAS_IFRAME_TURN',
+    prompt: promptText,
+    aspectRatio: item.aspectRatio || '1:1'
+  });
 
-        // Wait up to 4s for webRequest / page bridge to capture q4uTj
-        for (let i = 0; i < 20; i++) {
-          await new Promise(r => setTimeout(r, 200));
-          if (q4uTjTemplate && q4uTjTemplate.fReqRaw) {
-            return q4uTjTemplate;
-          }
-        }
-      } catch (e) {}
-    }
+  if (!res || !res.ok || !res.dataUrl) {
+    throw new Error((res && res.error) || 'Canvas iframe did not return image');
   }
-
-  throw new Error('Gemini Canvas RPC not synced yet. Open https://gemini.google.com/share/f8350ff50be0 in a tab and generate 1 test image (or reload it with RenderX open) so the q4uTj engine auto-syncs once.');
+  return { success: true, dataUrl: res.dataUrl, mediaType: 'image' };
 }
 
-/**
- * Recursively patch prompt & aspect ratio inside captured q4uTj f.req JSON
- */
 function patchQ4uTjPayload(template, item) {
   const outer = JSON.parse(template.fReqRaw);
   const innerStr = outer[0][1];
@@ -340,33 +379,25 @@ function patchQ4uTjPayload(template, item) {
     if (typeof node === 'string') {
       if (looksLikeJson(node)) {
         try {
-          const parsed = JSON.parse(node);
-          const transformed = transformNode(parsed, parentKey);
-          return JSON.stringify(transformed);
+          return JSON.stringify(transformNode(JSON.parse(node), parentKey));
         } catch (e) {}
       }
 
-      // Match exact aspect ratio strings
-      if (node === '1:1' || node === '16:9' || node === '9:16') {
-        return targetRatio;
-      }
+      if (node === '1:1' || node === '16:9' || node === '9:16') return targetRatio;
       if (node === 'square' || node === 'landscape' || node === 'portrait') {
         return targetRatio === '16:9' ? 'landscape' : (targetRatio === '9:16' ? 'portrait' : 'square');
       }
 
-      // Match prompt hint if captured
       if (promptHint && node.includes(promptHint)) {
         replacedPrompt = true;
         return promptText;
       }
 
-      // Match prompt / text object keys
       const keyLower = String(parentKey).toLowerCase();
       if ((keyLower === 'prompt' || keyLower === 'text') && node.length > 2 && !node.startsWith('http')) {
         replacedPrompt = true;
         return promptText;
       }
-
       return node;
     }
 
@@ -385,25 +416,19 @@ function patchQ4uTjPayload(template, item) {
       }
       return out;
     }
-
     return node;
   }
 
   let parsedInner = looksLikeJson(innerStr) ? JSON.parse(innerStr) : innerStr;
   parsedInner = transformNode(parsedInner, '');
 
-  // Fallback: if no key/hint matched, replace the longest natural-language non-URL/non-ID string inside the payload
   if (!replacedPrompt) {
     let bestPath = null;
     let bestLen = 0;
-
     function scanLongestText(node, path) {
       if (typeof node === 'string') {
         if (looksLikeJson(node)) {
-          try {
-            scanLongestText(JSON.parse(node), path.concat(['__JSON__']));
-            return;
-          } catch (e) {}
+          try { scanLongestText(JSON.parse(node), path.concat(['__JSON__'])); return; } catch (e) {}
         }
         const isUrl = node.startsWith('http') || node.startsWith('/') || node.startsWith('data:');
         const isModelOrId = /^(models\/|gemini-|imagen-|projects\/|[a-f0-9-]{20,})/i.test(node);
@@ -417,20 +442,12 @@ function patchQ4uTjPayload(template, item) {
         Object.entries(node).forEach(([k, v]) => scanLongestText(v, path.concat([k])));
       }
     }
-
     scanLongestText(parsedInner, []);
-
     if (bestPath) {
       function setAtPath(node, path, idx = 0) {
         const seg = path[idx];
-        if (seg === '__JSON__') {
-          const innerObj = JSON.parse(node);
-          return JSON.stringify(setAtPath(innerObj, path, idx + 1));
-        }
-        if (idx === path.length - 1) {
-          node[seg] = promptText;
-          return node;
-        }
+        if (seg === '__JSON__') return JSON.stringify(setAtPath(JSON.parse(node), path, idx + 1));
+        if (idx === path.length - 1) { node[seg] = promptText; return node; }
         node[seg] = setAtPath(node[seg], path, idx + 1);
         return node;
       }
@@ -442,9 +459,6 @@ function patchQ4uTjPayload(template, item) {
   return JSON.stringify(outer);
 }
 
-/**
- * Recursively extract generated image Base64 or Googleusercontent URL from batchexecute response
- */
 async function extractImageFromBatchExecuteResponse(rawText) {
   if (!rawText) throw new Error('Empty batchexecute response');
 
@@ -461,19 +475,15 @@ async function extractImageFromBatchExecuteResponse(rawText) {
       if (!Array.isArray(arr)) continue;
       for (const entry of arr) {
         if (Array.isArray(entry) && entry[0] === 'wrb.fr' && entry[1] === 'q4uTj') {
-          if (entry[2]) {
-            foundPayload = entry[2];
-          } else if (entry[5]) {
-            foundError = JSON.stringify(entry[5]);
-          }
+          if (entry[2]) foundPayload = entry[2];
+          else if (entry[5]) foundError = JSON.stringify(entry[5]);
         }
       }
     } catch (e) {}
   }
 
   if (!foundPayload) {
-    if (foundError) throw new Error(`Canvas RPC returned error: ${foundError}`);
-    throw new Error('No q4uTj payload found in Gemini response (session may require refresh).');
+    throw new Error(foundError ? `Canvas RPC error: ${foundError}` : 'No q4uTj payload in Gemini response.');
   }
 
   function looksLikeJson(str) {
@@ -487,95 +497,58 @@ async function extractImageFromBatchExecuteResponse(rawText) {
 
   function inspectNode(node) {
     if (candidateImage) return;
-
     if (typeof node === 'string') {
       if (looksLikeJson(node)) {
-        try {
-          inspectNode(JSON.parse(node));
-          return;
-        } catch (e) {}
+        try { inspectNode(JSON.parse(node)); return; } catch (e) {}
       }
-
-      if (node.startsWith('data:image/')) {
-        candidateImage = node;
-        return;
-      }
-
-      // Raw base64 image signatures (PNG / JPEG / WEBP)
+      if (node.startsWith('data:image/')) { candidateImage = node; return; }
       if (node.length > 1000) {
-        if (node.startsWith('iVBORw0KGgo')) {
-          candidateImage = `data:image/png;base64,${node}`;
-          return;
-        }
-        if (node.startsWith('/9j/')) {
-          candidateImage = `data:image/jpeg;base64,${node}`;
-          return;
-        }
-        if (node.startsWith('UklGR')) {
-          candidateImage = `data:image/webp;base64,${node}`;
-          return;
-        }
+        if (node.startsWith('iVBORw0KGgo')) { candidateImage = `data:image/png;base64,${node}`; return; }
+        if (node.startsWith('/9j/')) { candidateImage = `data:image/jpeg;base64,${node}`; return; }
+        if (node.startsWith('UklGR')) { candidateImage = `data:image/webp;base64,${node}`; return; }
       }
-
       if (node.startsWith('https://') && node.includes('googleusercontent.com') && !node.includes('avatar') && !node.includes('profile')) {
         candidateImage = node;
         return;
       }
       return;
     }
-
     if (Array.isArray(node)) {
-      for (const item of node) {
-        inspectNode(item);
-        if (candidateImage) return;
-      }
+      for (const item of node) { inspectNode(item); if (candidateImage) return; }
       return;
     }
-
     if (node && typeof node === 'object') {
-      if (node.error && node.error.message) {
-        apiErrorMsg = node.error.message;
-      }
+      if (node.error && node.error.message) apiErrorMsg = node.error.message;
       if (node.bytesBase64Encoded && typeof node.bytesBase64Encoded === 'string') {
-        const mime = node.mimeType || candidateMime;
-        candidateImage = `data:${mime};base64,${node.bytesBase64Encoded}`;
+        candidateImage = `data:${node.mimeType || candidateMime};base64,${node.bytesBase64Encoded}`;
         return;
       }
       if (node.inlineData && node.inlineData.data) {
-        const mime = node.inlineData.mimeType || candidateMime;
-        candidateImage = `data:${mime};base64,${node.inlineData.data}`;
+        candidateImage = `data:${node.inlineData.mimeType || candidateMime};base64,${node.inlineData.data}`;
         return;
       }
       if (node.encodedImage && typeof node.encodedImage === 'string') {
-        candidateImage = node.encodedImage.startsWith('data:')
-          ? node.encodedImage
-          : `data:image/png;base64,${node.encodedImage}`;
+        candidateImage = node.encodedImage.startsWith('data:') ? node.encodedImage : `data:image/png;base64,${node.encodedImage}`;
         return;
       }
       if (node.mimeType && typeof node.mimeType === 'string' && node.mimeType.startsWith('image/')) {
         candidateMime = node.mimeType;
       }
-      for (const v of Object.values(node)) {
-        inspectNode(v);
-        if (candidateImage) return;
-      }
+      for (const v of Object.values(node)) { inspectNode(v); if (candidateImage) return; }
     }
   }
 
   inspectNode(foundPayload);
-
-  if (!candidateImage) {
-    throw new Error(apiErrorMsg || 'Gemini Canvas RPC succeeded but contained no image data.');
-  }
-
-  if (candidateImage.startsWith('https://')) {
-    return await fetchImageBase64InSW(candidateImage);
-  }
-  return candidateImage;
+  if (!candidateImage) throw new Error(apiErrorMsg || 'Gemini Canvas RPC returned no image data.');
+  return candidateImage.startsWith('https://') ? await fetchImageBase64InSW(candidateImage) : candidateImage;
 }
 
 async function executeCanvasDirectRPC(item, sessionMeta) {
-  const template = await ensureQ4uTjTemplateAvailable();
+  const template = q4uTjTemplate;
+  if (!template || !template.fReqRaw) {
+    return await runLeftPaneCanvasTurn(item);
+  }
+
   const bl = (sessionMeta && sessionMeta.bl) || template.bl;
   const fsid = (sessionMeta && sessionMeta.fsid) || template.fsid;
   const at = (sessionMeta && sessionMeta.at) || template.at;
@@ -592,9 +565,8 @@ async function executeCanvasDirectRPC(item, sessionMeta) {
     rt: 'c'
   });
 
-  const fReqPatched = patchQ4uTjPayload(template, item);
   const bodyParams = new URLSearchParams();
-  bodyParams.set('f.req', fReqPatched);
+  bodyParams.set('f.req', patchQ4uTjPayload(template, item));
   if (at) bodyParams.set('at', at);
 
   const resp = await fetch(`https://gemini.google.com/_/BardChatUi/data/batchexecute?${qs.toString()}`, {
@@ -607,28 +579,47 @@ async function executeCanvasDirectRPC(item, sessionMeta) {
     body: bodyParams.toString()
   });
 
-  if (!resp.ok) {
-    throw new Error(`Gemini RPC HTTP ${resp.status}`);
-  }
-
-  const rawText = await resp.text();
-  const dataUrl = await extractImageFromBatchExecuteResponse(rawText);
+  if (!resp.ok) throw new Error(`Gemini RPC HTTP ${resp.status}`);
+  const dataUrl = await extractImageFromBatchExecuteResponse(await resp.text());
   return { success: true, dataUrl, mediaType: 'image' };
 }
 
-// ================= 6. Google Flow Direct API Engine (aisandbox-pa) =================
+// ================= 6. Google Flow Engine (aisandbox-pa Direct + Left-Pane Sync/Fallback) =================
+async function findOpenFlowTab() {
+  const tabs = await chrome.tabs.query({
+    url: ['https://flow.google.com/*', 'https://*.flow.google/*', 'https://labs.google/*', 'https://aitestkitchen.withgoogle.com/*']
+  });
+  return (tabs && tabs.length > 0) ? tabs[0] : null;
+}
 
 async function getFlowRecaptchaFromOpenTab(siteKey) {
   try {
-    const flowTabs = await chrome.tabs.query({
-      url: ['https://flow.google.com/*', 'https://*.flow.google/*', 'https://labs.google/*', 'https://aitestkitchen.withgoogle.com/*']
-    });
-    if (flowTabs && flowTabs.length > 0) {
-      const ctx = await chrome.tabs.sendMessage(flowTabs[0].id, { type: 'GET_FLOW_CONTEXT', siteKey });
-      if (ctx) return ctx;
+    const flowTab = await findOpenFlowTab();
+    if (flowTab) {
+      return await chrome.tabs.sendMessage(flowTab.id, { type: 'GET_FLOW_CONTEXT', siteKey });
     }
   } catch (e) {}
   return null;
+}
+
+async function runLeftPaneFlowTurn(item, subMode = 'image') {
+  const flowTab = await findOpenFlowTab();
+  if (!flowTab) {
+    throw new Error('Google Flow page not open on the left pane. Switch engine to Google Flow in the 70vw dock first.');
+  }
+
+  const promptText = sanitizePromptForEngine(item.fullPrompt || item.rawPrompt);
+  const res = await chrome.tabs.sendMessage(flowTab.id, {
+    type: 'RUN_FLOW_LEFT_PANE_TURN',
+    prompt: promptText,
+    subMode
+  });
+
+  if (!res || !res.ok || !res.imageUrl) {
+    throw new Error((res && res.error) || 'Flow left-pane generation failed');
+  }
+  const dataUrl = res.imageUrl.startsWith('http') ? await fetchImageBase64InSW(res.imageUrl) : res.imageUrl;
+  return { success: true, dataUrl, mediaType: res.mediaType || (subMode.includes('video') ? 'video' : 'image') };
 }
 
 function mapAspectToFlowEnum(aspectRatio) {
@@ -649,14 +640,13 @@ async function executeFlowDirectAPI(item, subMode = 'image') {
   const apiKey = (flowAuthContext && flowAuthContext.apiKey) || '';
 
   if (!authorization || !projectId) {
-    throw new Error('Google Flow API session not synced yet. Open Google Flow on the left and generate 1 test prompt (or open a project) to auto-capture your live Bearer token & Project ID — after that RenderX runs 100% tab-free.');
+    return await runLeftPaneFlowTurn(item, subMode);
   }
 
   const promptText = sanitizePromptForEngine(item.fullPrompt || item.rawPrompt);
   const aspectEnum = mapAspectToFlowEnum(item.aspectRatio || '1:1');
   const seed = Math.floor(100000 + Math.random() * 9000000);
 
-  // Clone captured body template if available, otherwise construct standard flowMedia:batchGenerateImages body
   let payload;
   if (flowAuthContext.bodyTemplate && typeof flowAuthContext.bodyTemplate === 'object') {
     payload = JSON.parse(JSON.stringify(flowAuthContext.bodyTemplate));
@@ -671,26 +661,14 @@ async function executeFlowDirectAPI(item, subMode = 'image') {
       }
     }
     if (Array.isArray(payload.requests) && payload.requests.length > 0) {
-      const req0 = { ...payload.requests[0], seed, prompt: promptText, imageAspectRatio: aspectEnum };
-      payload.requests = [req0];
+      payload.requests = [{ ...payload.requests[0], seed, prompt: promptText, imageAspectRatio: aspectEnum }];
     } else {
       payload.prompt = promptText;
     }
   } else {
     payload = {
-      clientContext: {
-        projectId,
-        sessionId: `;${Date.now()}`,
-        tool: 'PINHOLE'
-      },
-      requests: [
-        {
-          seed,
-          prompt: promptText,
-          imageAspectRatio: aspectEnum,
-          imageModelName: 'GEM_PIX_2'
-        }
-      ]
+      clientContext: { projectId, sessionId: `;${Date.now()}`, tool: 'PINHOLE' },
+      requests: [{ seed, prompt: promptText, imageAspectRatio: aspectEnum, imageModelName: 'GEM_PIX_2' }]
     };
     if (openCtx && openCtx.recaptchaToken) {
       payload.clientContext.recaptchaContext = {
@@ -704,10 +682,7 @@ async function executeFlowDirectAPI(item, subMode = 'image') {
     ? flowAuthContext.lastEndpoint
     : `https://aisandbox-pa.googleapis.com/v1/projects/${projectId}/flowMedia:batchGenerateImages`;
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': authorization
-  };
+  const headers = { 'Content-Type': 'application/json', 'Authorization': authorization };
   if (apiKey) headers['x-goog-api-key'] = apiKey;
 
   const resp = await fetch(endpoint, {
@@ -718,44 +693,32 @@ async function executeFlowDirectAPI(item, subMode = 'image') {
   });
 
   if (!resp.ok) {
+    // Fallback cleanly to left-pane Flow turn if token expired (401/403)
+    if (resp.status === 401 || resp.status === 403) {
+      return await runLeftPaneFlowTurn(item, subMode);
+    }
     const errText = await resp.text().catch(() => '');
     throw new Error(`Flow API HTTP ${resp.status}: ${errText.slice(0, 180)}`);
   }
 
   const json = await resp.json();
-
-  // Extract Base64 / fifeUrl from Flow response recursively
   let foundMedia = null;
   function scanFlowJson(node) {
     if (foundMedia || !node) return;
     if (typeof node === 'object') {
       if (node.encodedImage && typeof node.encodedImage === 'string') {
-        foundMedia = node.encodedImage.startsWith('data:')
-          ? node.encodedImage
-          : `data:image/png;base64,${node.encodedImage}`;
+        foundMedia = node.encodedImage.startsWith('data:') ? node.encodedImage : `data:image/png;base64,${node.encodedImage}`;
         return;
       }
-      if (node.fifeUrl && typeof node.fifeUrl === 'string') {
-        foundMedia = node.fifeUrl;
-        return;
-      }
-      if (node.videoUrl && typeof node.videoUrl === 'string') {
-        foundMedia = node.videoUrl;
-        return;
-      }
-      if (Array.isArray(node)) {
-        node.forEach(scanFlowJson);
-      } else {
-        Object.values(node).forEach(scanFlowJson);
-      }
+      if (node.fifeUrl && typeof node.fifeUrl === 'string') { foundMedia = node.fifeUrl; return; }
+      if (node.videoUrl && typeof node.videoUrl === 'string') { foundMedia = node.videoUrl; return; }
+      if (Array.isArray(node)) node.forEach(scanFlowJson);
+      else Object.values(node).forEach(scanFlowJson);
     }
   }
 
   scanFlowJson(json);
-  if (!foundMedia) {
-    throw new Error('Flow API returned no encodedImage or media URL.');
-  }
-
+  if (!foundMedia) throw new Error('Flow API returned no image/video data.');
   const dataUrl = foundMedia.startsWith('http') ? await fetchImageBase64InSW(foundMedia) : foundMedia;
   return { success: true, dataUrl, mediaType: subMode.includes('video') ? 'video' : 'image' };
 }
@@ -814,13 +777,9 @@ async function processShotDirectWithRetry(item, engine, subMode, sessionMeta) {
       }
     } catch (err) {
       lastError = err;
-      // Do not burn retries if protocol hasn't been synced yet
-      if (err.message.includes('not synced yet')) {
-        throw err;
-      }
+      if (err.message.includes('not open on the left pane')) throw err;
       if (attempt < maxRetries && !shouldStopQueue) {
-        const backoffMs = 800 + attempt * 700;
-        await new Promise(r => setTimeout(r, backoffMs));
+        await new Promise(r => setTimeout(r, 700 + attempt * 600));
       }
     }
   }
@@ -829,10 +788,7 @@ async function processShotDirectWithRetry(item, engine, subMode, sessionMeta) {
 }
 
 async function runZeroTabDirectBatch(items, engine = 'gemini-canvas', subMode = 'image') {
-  if (isQueueRunning) {
-    console.warn('[RenderX] Queue already running');
-    return;
-  }
+  if (isQueueRunning) return;
 
   isQueueRunning = true;
   shouldStopQueue = false;
@@ -852,28 +808,99 @@ async function runZeroTabDirectBatch(items, engine = 'gemini-canvas', subMode = 
   if (engine === 'gemini-canvas') {
     const sourcePath = (q4uTjTemplate && q4uTjTemplate.sourcePath) || '/share/f8350ff50be0';
     sessionMeta = await refreshGeminiSessionMeta(sourcePath);
+
+    // If q4uTj is NOT cached yet, run Shot #1 via the left-pane Canvas iframe first to auto-capture q4uTj!
+    if ((!q4uTjTemplate || !q4uTjTemplate.fReqRaw) && items.length > 0) {
+      const firstItem = items[0];
+      broadcastToDashboard({ type: 'ITEM_STARTED', index: firstItem.index, timestamp: firstItem.timestamp, prompt: firstItem.rawPrompt });
+      try {
+        const res1 = await runLeftPaneCanvasTurn(firstItem);
+        firstItem.dataUrl = res1.dataUrl;
+        firstItem.status = 'done';
+        firstItem.mediaType = 'image';
+        globalCapturedImages.add(res1.dataUrl);
+        await persistQueueState();
+        broadcastToDashboard({
+          type: 'ITEM_COMPLETED',
+          index: firstItem.index,
+          mediaType: 'image',
+          dataUrl: res1.dataUrl,
+          completedCount: 1,
+          total: items.length
+        });
+        // Refresh sessionMeta just in case webRequest populated q4uTjTemplate
+        if (q4uTjTemplate && q4uTjTemplate.sourcePath) {
+          sessionMeta = await refreshGeminiSessionMeta(q4uTjTemplate.sourcePath);
+        }
+      } catch (err) {
+        firstItem.status = 'failed';
+        firstItem.error = err.message;
+        await persistQueueState();
+        broadcastToDashboard({
+          type: 'ITEM_FAILED',
+          index: firstItem.index,
+          error: err.message,
+          completedCount: 0,
+          total: items.length
+        });
+      }
+    }
+  } else if (engine === 'google-flow') {
+    if (!flowAuthContext) {
+      const stored = await chrome.storage.local.get('renderx_flow_auth');
+      if (stored?.renderx_flow_auth) flowAuthContext = stored.renderx_flow_auth;
+    }
+    // If Flow Bearer/projectId not captured yet, run Shot #1 in left-pane Flow tab to auto-capture auth!
+    if ((!flowAuthContext || !flowAuthContext.authorization || !flowAuthContext.projectId) && items.length > 0) {
+      const firstItem = items[0];
+      broadcastToDashboard({ type: 'ITEM_STARTED', index: firstItem.index, timestamp: firstItem.timestamp, prompt: firstItem.rawPrompt });
+      try {
+        const res1 = await runLeftPaneFlowTurn(firstItem, subMode);
+        firstItem.dataUrl = res1.dataUrl;
+        firstItem.status = 'done';
+        firstItem.mediaType = res1.mediaType;
+        globalCapturedImages.add(res1.dataUrl);
+        await persistQueueState();
+        broadcastToDashboard({
+          type: 'ITEM_COMPLETED',
+          index: firstItem.index,
+          mediaType: res1.mediaType,
+          dataUrl: res1.dataUrl,
+          completedCount: 1,
+          total: items.length
+        });
+      } catch (err) {
+        firstItem.status = 'failed';
+        firstItem.error = err.message;
+        await persistQueueState();
+        broadcastToDashboard({
+          type: 'ITEM_FAILED',
+          index: firstItem.index,
+          error: err.message,
+          completedCount: 0,
+          total: items.length
+        });
+      }
+    }
   }
 
+  // Remaining items execute concurrently via Direct Fetch Pool
+  const remainingItems = items.filter(it => it.status !== 'done' && it.status !== 'failed');
   let nextIdx = 0;
-  const poolSize = Math.min(DIRECT_FETCH_CONCURRENCY, items.length);
+  const poolSize = Math.min(DIRECT_FETCH_CONCURRENCY, Math.max(1, remainingItems.length));
 
   async function workerLoop() {
     while (!shouldStopQueue) {
       const idx = nextIdx++;
-      if (idx >= items.length) break;
+      if (idx >= remainingItems.length) break;
 
-      const item = items[idx];
+      const item = remainingItems[idx];
       currentShotIndex = item.index;
 
       await acquireMicroSlot();
       if (shouldStopQueue) break;
 
-      broadcastToDashboard({
-        type: 'ITEM_STARTED',
-        index: item.index,
-        timestamp: item.timestamp,
-        prompt: item.rawPrompt
-      });
+      broadcastToDashboard({ type: 'ITEM_STARTED', index: item.index, timestamp: item.timestamp, prompt: item.rawPrompt });
 
       try {
         const result = await processShotDirectWithRetry(item, engine, subMode, sessionMeta);
@@ -908,7 +935,9 @@ async function runZeroTabDirectBatch(items, engine = 'gemini-canvas', subMode = 
     }
   }
 
-  await Promise.all(Array.from({ length: poolSize }, () => workerLoop()));
+  if (remainingItems.length > 0) {
+    await Promise.all(Array.from({ length: poolSize }, () => workerLoop()));
+  }
 
   isQueueRunning = false;
   await persistQueueState();
@@ -940,6 +969,36 @@ async function broadcastToDashboard(message) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (!request) return false;
 
+  if (request.type === 'SWITCH_TO_DOCKED_MODE') {
+    const targetEngine = request.engine || currentEngine || 'gemini-canvas';
+    currentEngine = targetEngine;
+    chrome.storage.local.set({ renderx_selected_engine: targetEngine }).catch(() => {});
+    if (sender && sender.tab && sender.tab.id) {
+      dockedTabIds.add(sender.tab.id);
+      persistDockedTabs();
+      chrome.tabs.update(sender.tab.id, { url: getTargetHostUrl(targetEngine) }).catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (request.type === 'SWITCH_ENGINE_HOST') {
+    const targetEngine = request.engine || 'gemini-canvas';
+    currentEngine = targetEngine;
+    chrome.storage.local.set({ renderx_selected_engine: targetEngine }).catch(() => {});
+
+    if (sender && sender.tab && sender.tab.id) {
+      dockedTabIds.add(sender.tab.id);
+      persistDockedTabs();
+      const curUrl = sender.tab.url || '';
+      if (!isEngineHostUrl(curUrl, targetEngine)) {
+        chrome.tabs.update(sender.tab.id, { url: getTargetHostUrl(targetEngine) }).catch(() => {});
+      }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (request.type === 'CANVAS_PROMPT_HINT') {
     lastCanvasPromptHint = request.prompt || '';
     lastCanvasAspectHint = request.aspectRatio || 'square';
@@ -949,7 +1008,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'CAPTURED_Q4UTJ_FETCH') {
     const ok = saveCapturedQ4uTj(request.url, request.body, request.promptHint);
-    if (ok) broadcastToDashboard({ type: 'SYNC_STATUS_UPDATED', geminiSynced: true, flowSynced: Boolean(flowAuthContext?.authorization) });
     sendResponse({ ok });
     return true;
   }
@@ -966,7 +1024,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       updatedAt: Date.now()
     };
     chrome.storage.local.set({ renderx_flow_auth: flowAuthContext }).catch(() => {});
-    broadcastToDashboard({ type: 'SYNC_STATUS_UPDATED', geminiSynced: Boolean(q4uTjTemplate?.fReqRaw), flowSynced: Boolean(flowAuthContext?.authorization) });
+    broadcastToDashboard({
+      type: 'SYNC_STATUS_UPDATED',
+      geminiSynced: Boolean(q4uTjTemplate?.fReqRaw),
+      flowSynced: Boolean(flowAuthContext?.authorization && flowAuthContext?.projectId)
+    });
     sendResponse({ ok: true });
     return true;
   }
@@ -995,6 +1057,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       success: true,
       isQueueRunning,
       currentShotIndex,
+      activeEngine: currentEngine,
       geminiConnected: Boolean(q4uTjTemplate && q4uTjTemplate.fReqRaw),
       flowConnected: Boolean(flowAuthContext && flowAuthContext.authorization && flowAuthContext.projectId)
     });
