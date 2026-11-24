@@ -46,7 +46,26 @@ PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 GEMINI_SHARE_URL = "https://gemini.google.com/share/f8350ff50be0"
+CANVAS_CONFIG_FILE = BASE_DIR / "canvas_config.json"
 FLOW_URL = "https://flow.google.com/"
+
+
+def get_canvas_url() -> str:
+    try:
+        if CANVAS_CONFIG_FILE.exists():
+            data = json.loads(CANVAS_CONFIG_FILE.read_text(encoding="utf-8"))
+            url = (data.get("canvas_url") or "").strip()
+            if url.startswith("https://"):
+                return url
+    except Exception:
+        pass
+    return GEMINI_SHARE_URL
+
+
+def set_canvas_url(url: str) -> str:
+    clean = (url or "").strip() or GEMINI_SHARE_URL
+    CANVAS_CONFIG_FILE.write_text(json.dumps({"canvas_url": clean}, indent=2), encoding="utf-8")
+    return clean
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _GOOGLE_SIGNIN_COOKIES = (
@@ -301,7 +320,7 @@ def open_real_chrome_for_login(pid: str, engine: str = "gemini-canvas") -> Tuple
     _normalize_window_placement(p_path)
 
     google_url = "https://accounts.google.com"
-    engine_url = FLOW_URL if engine == "google-flow" else GEMINI_SHARE_URL
+    engine_url = FLOW_URL if engine == "google-flow" else get_canvas_url()
 
     try:
         bat_path = p_path / "launch_login.bat"
@@ -738,7 +757,8 @@ async def run_canvas_profile_worker(
 
         try:
             await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Opening Gemini Canvas in background Chrome..."})
-            await page.goto(GEMINI_SHARE_URL, wait_until="domcontentloaded", timeout=90000)
+            canvas_target = get_canvas_url()
+            await page.goto(canvas_target, wait_until="domcontentloaded", timeout=90000)
             await asyncio.sleep(3.0)
             await _dismiss_canvas_gates(page)
 
@@ -758,7 +778,7 @@ async def run_canvas_profile_worker(
                 if state.should_stop:
                     break
                 if group_idx > 0:
-                    await page.goto(GEMINI_SHARE_URL, wait_until="domcontentloaded", timeout=90000)
+                    await page.goto(get_canvas_url(), wait_until="domcontentloaded", timeout=90000)
                     await asyncio.sleep(2.5)
                     await _dismiss_canvas_gates(page)
                     frame = await _find_canvas_frame(page, timeout_sec=60)
@@ -1829,6 +1849,24 @@ async def api_add_profile():
     save_profiles(profiles)
     await broadcast_ws({"type": "PROFILES_UPDATED"})
     return {"success": True, "profile": public_profile_view(new_prof)}
+
+
+class CanvasUrlReq(BaseModel):
+    canvas_url: str
+
+
+@app.get("/api/canvas-url")
+async def api_get_canvas_url():
+    return {"canvas_url": get_canvas_url(), "is_custom": get_canvas_url() != GEMINI_SHARE_URL}
+
+
+@app.post("/api/canvas-url")
+async def api_set_canvas_url(req: CanvasUrlReq):
+    url = (req.canvas_url or "").strip()
+    if url and not url.startswith("https://gemini.google.com/"):
+        raise HTTPException(400, "Please enter a valid https://gemini.google.com/... Canvas share URL")
+    saved = set_canvas_url(url)
+    return {"success": True, "canvas_url": saved, "is_custom": saved != GEMINI_SHARE_URL}
 
 
 class LoginReq(BaseModel):
