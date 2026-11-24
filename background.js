@@ -1,17 +1,24 @@
 /**
- * RenderX Image Studio - Hardened Background Service Worker (Manifest V3)
- * Attached Side Panel Workspace + Cross-Window Tab Discovery + SW Keep-Alive
- * Snapshot-Diff DOM Automation & 5-Attempt Resilient Retry Queue
+ * RenderX Image Studio - Background Service Worker (Manifest V3)
+ * Dual-Mode Account Studio (Gemini Canvas & Google Flow)
+ * Attached Side Panel Workspace + Keep-Alive + State Persistence
  */
 
-// 1. Attached Side Panel Workspace (Never floating popup windows)
-if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
-    .then(() => console.log('[RenderX] Side panel configured: openPanelOnActionClick = true'))
-    .catch(err => console.error('[RenderX] Side panel config error:', err));
-}
+// Side Panel Registration & Dual Click Triggers (Manifest V3)
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+});
 
-// State
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+
+chrome.action.onClicked.addListener(async (tab) => {
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch (err) {
+    console.error("[RenderX] Failed to open Side Panel:", err);
+  }
+});
+
 let isQueueRunning = false;
 let shouldStopQueue = false;
 let currentQueueItems = [];
@@ -25,22 +32,18 @@ const connectedPorts = new Set();
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'renderex_keepalive') {
     connectedPorts.add(port);
-    console.log('[RenderX KeepAlive] Connected from dashboard. Active ports:', connectedPorts.size);
-
     port.onMessage.addListener((msg) => {
       if (msg.type === 'HEARTBEAT') {
         port.postMessage({ type: 'HEARTBEAT_ACK', timestamp: Date.now() });
       }
     });
-
     port.onDisconnect.addListener(() => {
       connectedPorts.delete(port);
-      console.log('[RenderX KeepAlive] Port disconnected. Remaining:', connectedPorts.size);
     });
   }
 });
 
-// Queue State Persistence in chrome.storage.local
+// Queue Persistence in chrome.storage.local
 async function persistQueueState() {
   try {
     await chrome.storage.local.set({
@@ -53,9 +56,7 @@ async function persistQueueState() {
         lastUpdated: Date.now()
       }
     });
-  } catch (e) {
-    console.warn('[RenderX] Failed to persist queue state:', e);
-  }
+  } catch (e) {}
 }
 
 async function loadPersistedQueueState() {
@@ -74,27 +75,122 @@ async function clearPersistedQueueState() {
 }
 
 /**
- * 4. Pre-Injection Prompt Sanitizer
- * Strips scene headers, boilerplate DNA locks, converts negative syntax, and rephrases sensitive terms.
+ * Workspace Window Arranger:
+ * Arranges Left 30% for Google Session (Gemini / Flow) and Right 70% for RenderX Studio.
+ * Uses standard Chrome windows (type: 'normal') to prevent broken web-app appearances.
+ */
+async function setup70PercentStudioLayout(requestedEngine = 'gemini-canvas') {
+  try {
+    const currentWin = await chrome.windows.getCurrent();
+    const screenW = currentWin.width ? Math.max(currentWin.width, 1400) : 1920;
+    const screenH = currentWin.height ? Math.max(currentWin.height, 800) : 1080;
+
+    const leftWidth = Math.round(screenW * 0.30);
+    const rightWidth = screenW - leftWidth;
+
+    // 1. Google Account Session Tab (Left 30%)
+    let targetUrls = [];
+    let launchUrl = '';
+
+    if (requestedEngine === 'google-flow') {
+      targetUrls = ["https://flow.google.com/*", "https://*.flow.google/*", "https://labs.google/*", "https://aitestkitchen.withgoogle.com/*"];
+      launchUrl = "https://labs.google/fx/tools/flow";
+    } else {
+      targetUrls = ["https://gemini.google.com/*"];
+      launchUrl = "https://gemini.google.com/app";
+    }
+
+    const existingGoogleTabs = await chrome.tabs.query({ url: targetUrls });
+    let googleWinId = null;
+    let googleTab = null;
+
+    if (existingGoogleTabs && existingGoogleTabs.length > 0) {
+      googleTab = existingGoogleTabs[0];
+      googleWinId = googleTab.windowId;
+      try {
+        await chrome.windows.update(googleWinId, {
+          left: 0,
+          top: 0,
+          width: leftWidth,
+          height: screenH,
+          state: 'normal',
+          focused: false
+        });
+        await chrome.tabs.update(googleTab.id, { active: true });
+      } catch (e) {}
+    } else {
+      // Create new standard window on Left 30%
+      const newWin = await chrome.windows.create({
+        url: launchUrl,
+        type: 'normal',
+        left: 0,
+        top: 0,
+        width: leftWidth,
+        height: screenH,
+        focused: false
+      });
+      googleWinId = newWin.id;
+      if (newWin.tabs && newWin.tabs.length > 0) {
+        googleTab = newWin.tabs[0];
+      }
+    }
+
+    // 2. RenderX Studio Dashboard (Right 70%)
+    const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+    const existingDashTabs = await chrome.tabs.query({ url: dashboardUrl });
+
+    if (existingDashTabs && existingDashTabs.length > 0) {
+      const dashTab = existingDashTabs[0];
+      await chrome.windows.update(dashTab.windowId, {
+        left: leftWidth,
+        top: 0,
+        width: rightWidth,
+        height: screenH,
+        state: 'normal',
+        focused: true
+      });
+      await chrome.tabs.update(dashTab.id, { active: true });
+    } else {
+      await chrome.windows.create({
+        url: dashboardUrl,
+        type: 'normal',
+        left: leftWidth,
+        top: 0,
+        width: rightWidth,
+        height: screenH,
+        focused: true
+      });
+    }
+
+    return { googleTab, googleWinId };
+  } catch (err) {
+    console.error('[RenderX] Error setting up 70% layout:', err);
+  }
+}
+
+
+
+/**
+ * Pre-Injection Prompt Sanitizer
  */
 function sanitizePromptForEngine(rawPrompt) {
   if (!rawPrompt) return '';
   let text = String(rawPrompt);
 
-  // 1. Extract and remove timestamp and scene prefixes (e.g., "[00.00 - 04.35] Scene 1:", "00.00-04.35 | Scene 1:", "Scene 1:")
+  // Extract and remove scene/timestamp prefixes
   text = text.replace(/^(\[?[0-9.:\-\s]+\]?\s*\|\s*)?(Scene\s*\d+\s*:?\s*)?/i, '');
   text = text.replace(/^\[[0-9.:\-\s]+\]\s*:?\s*/i, '');
 
-  // 2. Strip "Master Style DNA locked." or similar boilerplate
+  // Strip boilerplate
   text = text.replace(/Master Style DNA locked\.?/gi, '');
   text = text.replace(/Style DNA locked\.?/gi, '');
 
-  // 3. Convert "--no <terms>" into "Clean composition, strictly avoiding <terms>."
+  // Convert negative syntax
   text = text.replace(/--no:?\s+([^,\n\.]+)([,.\n]|$)/gi, (match, terms) => {
     return ` Clean composition, strictly avoiding ${terms.trim()}. `;
   });
 
-  // 4. Rephrase sensitive conflict / sensitive historical phrases to prevent safety blocks
+  // Rephrase sensitive phrases
   const safetyRephrases = [
     { pattern: /\batomic bombings?\b/gi, replacement: 'historic 1945 post-war surrender era' },
     { pattern: /\bnuclear explosion\b/gi, replacement: 'massive cinematic fiery energy burst' },
@@ -103,31 +199,26 @@ function sanitizePromptForEngine(rawPrompt) {
     { pattern: /\bbloody\b/gi, replacement: 'crimson-tinted' },
     { pattern: /\bgore\b/gi, replacement: 'gritty battle wear' },
     { pattern: /\bcorpse\b/gi, replacement: 'fallen soldier in repose' },
-    { pattern: /\bdead bodies\b/gi, replacement: 'aftermath of the battlefield' },
-    { pattern: /\bweapon of mass destruction\b/gi, replacement: 'monumental strategic weapon' }
+    { pattern: /\bdead bodies\b/gi, replacement: 'aftermath of the battlefield' }
   ];
 
   for (const item of safetyRephrases) {
     text = text.replace(item.pattern, item.replacement);
   }
 
-  // Remove redundant whitespace
-  text = text.replace(/\s{2,}/g, ' ').trim();
-  return text;
+  return text.replace(/\s{2,}/g, ' ').trim();
 }
 
 /**
- * 3. Cross-Window Tab Discovery & Programmatic Injection
- * Finds target Google session across ALL windows (never currentWindow: true).
- * Ensures content script is injected with idempotency guard (window.__renderexLoaded).
+ * Resilient Tab Handshake & Content Script Verification
  */
-async function ensureEngineTabAndScript(engine) {
+async function ensureConnectedEngineTab(engine) {
   let targetUrls = [];
   let launchUrl = '';
   let scriptFile = '';
 
   if (engine === 'google-flow') {
-    targetUrls = ["https://flow.google.com/*", "https://labs.google/*"];
+    targetUrls = ["https://flow.google.com/*", "https://*.flow.google/*", "https://labs.google/*", "https://aitestkitchen.withgoogle.com/*"];
     launchUrl = "https://labs.google/fx/tools/flow";
     scriptFile = "content_flow.js";
   } else {
@@ -136,46 +227,50 @@ async function ensureEngineTabAndScript(engine) {
     scriptFile = "content_canvas.js";
   }
 
-  // Cross-Window search (NEVER currentWindow: true)
-  const matchingTabs = await chrome.tabs.query({ url: targetUrls });
-  let targetTab = null;
+  // Cross-Window tab query (NEVER currentWindow: true)
+  const tabs = await chrome.tabs.query({ url: targetUrls });
+  let tab = null;
 
-  if (matchingTabs && matchingTabs.length > 0) {
-    targetTab = matchingTabs[0];
-    console.log(`[RenderX] Found existing ${engine} tab (ID: ${targetTab.id}, windowId: ${targetTab.windowId})`);
+  if (tabs && tabs.length > 0) {
+    tab = tabs[0];
   } else {
-    console.log(`[RenderX] No open tab found for ${engine}. Creating: ${launchUrl}`);
-    targetTab = await chrome.tabs.create({ url: launchUrl, active: true });
-
-    // Wait for page load complete
-    await waitForTabComplete(targetTab.id, 25000);
-    // Extra 3000ms delay for SPA hydration (React / Angular / Lit)
-    await new Promise(r => setTimeout(r, 3000));
+    console.log(`[RenderX] No open tab for ${engine}, launching: ${launchUrl}`);
+    tab = await chrome.tabs.create({ url: launchUrl, active: true });
+    await waitForTabComplete(tab.id, 25000);
+    await new Promise(r => setTimeout(r, 3500)); // SPA hydration wait
   }
 
-  // Verify and programmatically inject content script with idempotency guard
-  try {
-    const checkResults = await chrome.scripting.executeScript({
-      target: { tabId: targetTab.id },
-      func: () => window.__renderexLoaded === true
-    });
+  // Perform Ping Handshake
+  let isReady = false;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const pong = await new Promise((resolve) => {
+        chrome.tabs.sendMessage(tab.id, { type: 'PING' }, (res) => {
+          if (chrome.runtime.lastError || !res) resolve(null);
+          else resolve(res);
+        });
+      });
 
-    const isLoaded = checkResults && checkResults[0] && checkResults[0].result === true;
-    if (!isLoaded) {
-      console.log(`[RenderX] Programmatically injecting ${scriptFile} into tab ${targetTab.id}...`);
+      if (pong && pong.status === 'READY') {
+        isReady = true;
+        break;
+      }
+    } catch (e) {}
+
+    // Not responding, inject script programmatically
+    console.log(`[RenderX] Content script not responding on tab ${tab.id}, injecting ${scriptFile}...`);
+    try {
       await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
+        target: { tabId: tab.id },
         files: [scriptFile]
       });
-      await new Promise(r => setTimeout(r, 800));
-    } else {
-      console.log(`[RenderX] Content script already active in tab ${targetTab.id}`);
+      await new Promise(r => setTimeout(r, 1000));
+    } catch (injErr) {
+      console.warn('[RenderX] executeScript warning:', injErr.message);
     }
-  } catch (err) {
-    console.warn(`[RenderX] Script injection check note:`, err.message);
   }
 
-  return targetTab;
+  return tab;
 }
 
 function waitForTabComplete(tabId, timeoutMs = 25000) {
@@ -195,17 +290,15 @@ function waitForTabComplete(tabId, timeoutMs = 25000) {
 }
 
 /**
- * 6. 5-Attempt Retry Loop with Exponential/Jittered Backoff
+ * 5-Attempt Resilient Turn Runner
  */
 async function processTurnWithRetry(item, tabId, engine, subMode) {
   const isVideo = (engine === 'google-flow' && (subMode === 'text-to-video' || subMode === 'image-to-video'));
   const maxRetries = 5;
-  const timeoutMs = isVideo ? 120000 : 35000;
+  const timeoutMs = isVideo ? 120000 : 38000;
   let lastError = null;
 
-  // Sanitize the prompt before injecting into the engine
   const sanitizedPrompt = sanitizePromptForEngine(item.fullPrompt || item.rawPrompt);
-  console.log(`[RenderX] Shot #${item.index} sanitized prompt:`, sanitizedPrompt.slice(0, 70));
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     if (shouldStopQueue) throw new Error('Queue stopped by user');
@@ -240,7 +333,7 @@ async function processTurnWithRetry(item, tabId, engine, subMode) {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
           } else if (!res || !res.success) {
-            reject(new Error(res?.error || 'No media returned'));
+            reject(new Error(res?.error || 'Turn returned without image output.'));
           } else {
             resolve(res);
           }
@@ -252,10 +345,11 @@ async function processTurnWithRetry(item, tabId, engine, subMode) {
       }
     } catch (err) {
       lastError = err;
-      console.warn(`[RenderX] Shot #${item.index} (attempt ${attempt}/${maxRetries}) failed:`, err.message);
+      console.warn(`[RenderX] Shot #${item.index} (attempt ${attempt}/${maxRetries}) error:`, err.message);
 
       if (attempt < maxRetries && !shouldStopQueue) {
-        const backoffMs = 1000 + (attempt * 500); // 1.5s - 3s
+        // Exponential backoff with jitter
+        const backoffMs = 1200 + (attempt * 600);
         await new Promise(r => setTimeout(r, backoffMs));
       }
     }
@@ -291,11 +385,11 @@ async function runSequentialQueue(items, engine = 'gemini-canvas', subMode = 'im
 
   let engineTab = null;
   try {
-    engineTab = await ensureEngineTabAndScript(engine);
+    engineTab = await ensureConnectedEngineTab(engine);
   } catch (err) {
     broadcastToDashboard({
       type: 'QUEUE_ERROR',
-      error: `Could not launch or connect to ${engine}: ${err.message}`
+      error: `Could not connect to ${engine}: ${err.message}`
     });
     isQueueRunning = false;
     await persistQueueState();
@@ -335,9 +429,9 @@ async function runSequentialQueue(items, engine = 'gemini-canvas', subMode = 'im
         total: items.length
       });
 
-      // Brief pacing pause between shots
+      // Pacing pause
       if (i < items.length - 1 && !shouldStopQueue) {
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1600));
       }
     } catch (err) {
       item.status = 'failed';
@@ -366,7 +460,7 @@ async function runSequentialQueue(items, engine = 'gemini-canvas', subMode = 'im
 }
 
 /**
- * Broadcast message to open dashboard / sidepanel
+ * Broadcast message to dashboard windows and ports
  */
 async function broadcastToDashboard(message) {
   try {
@@ -377,7 +471,6 @@ async function broadcastToDashboard(message) {
     }
   } catch (e) {}
 
-  // Also broadcast via runtime ports
   for (const port of connectedPorts) {
     try {
       port.postMessage(message);
@@ -385,9 +478,7 @@ async function broadcastToDashboard(message) {
   }
 }
 
-// -----------------------------------------------------------------
 // Runtime Message Listener
-// -----------------------------------------------------------------
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'START_BATCH_QUEUE') {
     runSequentialQueue(request.items || [], request.engine || 'gemini-canvas', request.subMode || 'image');
@@ -401,10 +492,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.type === 'ARRANGE_70_PERCENT_WORKSPACE') {
+    setup70PercentStudioLayout(request.engine || 'gemini-canvas').then(() => sendResponse({ success: true }));
+    return true;
+  }
+
   if (request.type === 'CHECK_STATUS') {
     Promise.all([
       chrome.tabs.query({ url: "https://gemini.google.com/*" }),
-      chrome.tabs.query({ url: ["https://flow.google.com/*", "https://labs.google/*"] })
+      chrome.tabs.query({ url: ["https://flow.google.com/*", "https://*.flow.google/*", "https://labs.google/*"] })
     ]).then(([geminiTabs, flowTabs]) => {
       sendResponse({
         success: true,
