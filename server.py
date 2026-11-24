@@ -1130,11 +1130,11 @@ async def _flow_set_agent_mode(page: Page, enable: bool = True) -> bool:
     """Explicitly turn Google Flow Agent Mode ON (spark) or OFF (spark_off) using its live aria-pressed state."""
     try:
         agent_btn = page.locator('button[aria-label="Flow Agent"]').first
-        await agent_btn.wait_for(state="visible", timeout=25000)
+        await agent_btn.wait_for(state="visible", timeout=20000)
         pressed = (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
         if pressed != enable:
             await agent_btn.click(timeout=5000)
-            await asyncio.sleep(0.9)
+            await asyncio.sleep(0.35)
         return (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
     except Exception:
         return False
@@ -1142,12 +1142,12 @@ async def _flow_set_agent_mode(page: Page, enable: bool = True) -> bool:
 
 async def _flow_click_approve(page: Page) -> bool:
     """Auto-accept Flow Agent confirmation prompts if shown."""
-    for label in ("Approve", "Confirm", "Yes", "Proceed", "Kick off", "Continue", "Generate", "Create"):
+    for label in ("Approve", "Confirm", "Yes", "Proceed", "Kick off", "Continue"):
         try:
             btn = page.locator('.cdk-overlay-container button, [role="dialog"] button, main button').get_by_text(re.compile(rf"^{label}$", re.I))
             if await btn.count() > 0 and await btn.first.is_visible():
-                await btn.first.click(timeout=2500)
-                await asyncio.sleep(0.6)
+                await btn.first.click(timeout=2000)
+                await asyncio.sleep(0.3)
                 return True
         except Exception:
             continue
@@ -1159,15 +1159,11 @@ async def _flow_configure(page: Page, aspect_ratio: str = "1:1", is_video: bool 
     Verified against live flow.google.com DOM:
     When Flow Agent is OFF, button[aria-label="Settings trigger"] is visible and opens
     exact role="radio" buttons for Image/Video, 16:9 / 9:16 / 1:1, and x1..x4.
-    Always configures these BEFORE turning Flow Agent ON!
     """
-    # Settings trigger hides while Flow Agent is ON -> temporarily ensure Agent is OFF to lock settings
-    was_agent = False
     try:
         agent_btn = page.locator('button[aria-label="Flow Agent"]').first
         if await agent_btn.count() > 0 and await agent_btn.is_visible():
-            was_agent = (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
-            if was_agent:
+            if (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true":
                 await _flow_set_agent_mode(page, enable=False)
     except Exception:
         pass
@@ -1180,44 +1176,41 @@ async def _flow_configure(page: Page, aspect_ratio: str = "1:1", is_video: bool 
 
     try:
         st_btn = page.locator('button[aria-label="Settings trigger"]').first
-        await st_btn.wait_for(state="visible", timeout=15000)
-        await st_btn.click(timeout=5000)
-        await asyncio.sleep(0.6)
+        await st_btn.wait_for(state="visible", timeout=12000)
+        await st_btn.click(timeout=4000)
+        await asyncio.sleep(0.25)
 
         overlay = page.locator(".cdk-overlay-container")
 
-        # 1) Image vs Video radio button
         mode_pat = re.compile(r"\bVideo\b", re.I) if is_video else re.compile(r"\bImage\b", re.I)
         m_radio = overlay.locator('[role="radio"], button').filter(has_text=mode_pat).first
         if await m_radio.count() > 0 and await m_radio.is_visible():
             try:
-                await m_radio.click(timeout=2500)
-                await asyncio.sleep(0.3)
+                await m_radio.click(timeout=2000)
+                await asyncio.sleep(0.15)
             except Exception:
                 pass
 
-        # 2) Aspect Ratio radio button (e.g. "crop_9_16 9:16", "crop_16_9 16:9", "crop_square 1:1")
         for cand in ar_text_candidates:
             r_radio = overlay.locator('[role="radio"], button').filter(has_text=cand).first
             if await r_radio.count() > 0 and await r_radio.is_visible():
                 try:
-                    await r_radio.click(timeout=2500)
-                    await asyncio.sleep(0.3)
+                    await r_radio.click(timeout=2000)
+                    await asyncio.sleep(0.15)
                     break
                 except Exception:
                     pass
 
-        # 3) Output count = x1 (1 image generated per prompt)
         cnt_radio = overlay.locator('[role="radio"], button').filter(has_text=re.compile(r"^x1$")).first
         if await cnt_radio.count() > 0 and await cnt_radio.is_visible():
             try:
-                await cnt_radio.click(timeout=2500)
-                await asyncio.sleep(0.3)
+                await cnt_radio.click(timeout=2000)
+                await asyncio.sleep(0.15)
             except Exception:
                 pass
 
         await page.keyboard.press("Escape")
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.2)
     except Exception:
         pass
 
@@ -1267,7 +1260,7 @@ async def _flow_attach_ingredient_image(page: Page, data_url: str, prefix: str =
                 await upload_btn.click(timeout=4000, force=True)
             fc = await fc_info.value
             await fc.set_files(tmp_path)
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(1.1)
             await _flow_dismiss_banners(page)
             await _flow_close_overlays(page)
             return True
@@ -1275,7 +1268,7 @@ async def _flow_attach_ingredient_image(page: Page, data_url: str, prefix: str =
         file_inp = page.locator("input[type=file]").first
         if await file_inp.count() > 0:
             await file_inp.set_input_files(tmp_path)
-            await asyncio.sleep(2.2)
+            await asyncio.sleep(1.1)
             await _flow_dismiss_banners(page)
             await _flow_close_overlays(page)
             return True
@@ -1326,29 +1319,30 @@ async def _flow_paste_and_submit(page: Page, text: str):
         'div[aria-label="What do you want to create?"][contenteditable="true"]:visible, '
         '[contenteditable="true"]:visible, textarea:visible'
     ).first
-    await compose.wait_for(state="visible", timeout=25000)
+    await compose.wait_for(state="visible", timeout=20000)
     await compose.click(force=True)
-    await asyncio.sleep(0.25)
+    await asyncio.sleep(0.1)
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Backspace")
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.1)
 
+    # Instant insert_text paste (~0.25s instead of 10-40s slow char-by-char typing!)
     lines = [ln for ln in text.split("\n")]
     for idx, line in enumerate(lines):
         if line:
-            await compose.press_sequentially(line, delay=4)
+            await page.keyboard.insert_text(line)
         if idx < len(lines) - 1:
             await page.keyboard.press("Shift+Enter")
-    await asyncio.sleep(0.8)
+    await page.keyboard.type(" ", delay=5)
+    await asyncio.sleep(0.25)
 
-    # Verify Start generation button is enabled and actually triggers submission
     start_btn = page.locator('button[aria-label="Start generation"]:visible, button[aria-label*="Create" i]:visible, button[aria-label*="Send" i]:visible').first
-    for attempt in range(3):
+    for _ in range(3):
         if await start_btn.count() > 0 and await start_btn.is_visible():
             if await start_btn.get_attribute("disabled") is not None:
-                await compose.click()
-                await page.keyboard.type(" ", delay=15)
-                await asyncio.sleep(0.4)
+                await compose.click(force=True)
+                await page.keyboard.type(" ", delay=10)
+                await asyncio.sleep(0.25)
             try:
                 await start_btn.scroll_into_view_if_needed()
                 await start_btn.click(force=True)
@@ -1357,15 +1351,15 @@ async def _flow_paste_and_submit(page: Page, text: str):
         else:
             await compose.press("Enter")
 
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(1.2)
         try:
             still_text = (await compose.inner_text() or "").strip()
-            has_stop = await page.locator('button:has-text("stop"):visible, button:has-text("Stop"):visible').count() > 0
+            has_stop = await page.locator('button[aria-label="Stop"]:visible, button:has-text("stop"):visible').count() > 0
             if has_stop or len(still_text) < 4:
                 break
         except Exception:
             break
-        await compose.click()
+        await compose.click(force=True)
         await compose.press("Enter")
 
 
@@ -1427,6 +1421,186 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
     raise RuntimeError("Timed out waiting for Google Flow render")
 
 
+async def _flow_run_single_tab(
+    pid: str,
+    page: Page,
+    tab_items: List[Dict[str, Any]],
+    item_map: Dict[int, Dict[str, Any]],
+    sub_mode: str,
+    batch_dir: Path,
+    options: Dict[str, Any],
+    is_primary_tab: bool = True,
+):
+    create_new = options.get("createNewProject", True)
+    use_agent = options.get("useFlowAgent", True)
+    proj_name = (options.get("projectName") or "").strip()
+
+    already_in_proj = "flow.google.com/project/" in (page.url or "")
+    if not (already_in_proj and not create_new and is_primary_tab):
+        await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=90000)
+        try:
+            await page.locator('button:has-text("New project"), button[aria-label="Flow Agent"]').first.wait_for(state="visible", timeout=20000)
+        except Exception:
+            await asyncio.sleep(2.5)
+        await _flow_dismiss_banners(page)
+
+        if "accounts.google.com" in (page.url or "").lower():
+            raise RuntimeError("Profile signed out of Google Flow. Click Login for this profile first.")
+
+        try:
+            new_btn = page.get_by_role("button", name="New project").first
+            if await new_btn.count() > 0:
+                await new_btn.scroll_into_view_if_needed()
+                await new_btn.click(force=True)
+                await page.locator('button[aria-label="Flow Agent"]').first.wait_for(state="visible", timeout=20000)
+                await _flow_dismiss_banners(page)
+        except Exception:
+            pass
+
+    if proj_name and is_primary_tab:
+        try:
+            coll_inp = page.locator('input[value*="Untitled"], input[placeholder*="Untitled"]').first
+            if await coll_inp.count() > 0 and await coll_inp.is_visible():
+                await coll_inp.fill(proj_name[:60])
+                confirm_rn = page.locator('button[aria-label="Confirm rename"]:visible').first
+                if await confirm_rn.count() > 0:
+                    await confirm_rn.click()
+                    await asyncio.sleep(0.25)
+        except Exception:
+            pass
+
+    first_ar = tab_items[0].get("aspectRatio", "1:1") if tab_items else "1:1"
+    is_video = "video" in sub_mode
+
+    await _flow_configure(page, first_ar, is_video=is_video)
+    agent_on = await _flow_set_agent_mode(page, enable=use_agent)
+
+    has_char_img = False
+    has_style_img = False
+    if options.get("charImageBase64"):
+        has_char_img = await _flow_attach_ingredient_image(page, options["charImageBase64"], prefix="rx_char")
+    if options.get("styleImageBase64"):
+        has_style_img = await _flow_attach_ingredient_image(page, options["styleImageBase64"], prefix="rx_style")
+
+    directives = _build_flow_agent_directives(first_ar, is_video, options, has_char_img, has_style_img)
+    if proj_name:
+        directives = f"Project: {proj_name} | " + directives
+    mode_tag = "Agent Mode" if agent_on else "Direct Fast Mode"
+    if is_primary_tab:
+        await broadcast_ws({
+            "type": "DIAGNOSTIC_LOG",
+            "text": f"[{pid}] Flow {mode_tag} | {directives[:140]}"
+        })
+
+    media_sel = 'video[src], img[src*="/asb/"], img[src*="flow.google.com"], img[src*="googleusercontent"], img[src*="storage.googleapis"], img[src^="blob:"], img[src^="data:image"]'
+
+    if use_agent and len(tab_items) > 1 and not is_video:
+        before_srcs = set(
+            await page.evaluate(f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)")
+        )
+        for it in tab_items:
+            await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+
+        numbered = "\n".join(
+            f"{i+1}. {sanitize_prompt(it['rawPrompt'] or it['fullPrompt'])}"
+            for i, it in enumerate(tab_items)
+        )
+        batch_msg = (
+            f"[DASHBOARD REQUIREMENTS LOCKED]\n{directives}\n\n"
+            f"Generate all {len(tab_items)} separate images in exact numbered order (do not merge or skip):\n{numbered}"
+        )
+        await _flow_paste_and_submit(page, batch_msg)
+
+        pending_items = list(tab_items)
+        last_progress = time.time()
+        started_flow = False
+        deadline = time.time() + max(180, len(tab_items) * 35)
+        while pending_items and time.time() < deadline and not state.should_stop:
+            await asyncio.sleep(1.0)
+            await _flow_dismiss_banners(page)
+            await _flow_click_approve(page)
+
+            try:
+                stop_active = await page.locator('button[aria-label="Stop"]:visible, button:has-text("stop"):visible').count() > 0
+            except Exception:
+                stop_active = False
+            if stop_active:
+                started_flow = True
+                last_progress = time.time()
+
+            now_items = await page.evaluate(f"""() => {{
+                const els = Array.from(document.querySelectorAll('{media_sel}'));
+                return els.map(el => {{
+                    let meta = el.alt || el.getAttribute('aria-label') || '';
+                    let cur = el.parentElement;
+                    for (let d = 0; d < 5 && cur; d++) {{
+                        const a = Array.from(cur.querySelectorAll('[aria-label]')).map(x => x.getAttribute('aria-label') || '').join(' ');
+                        const t = (cur.innerText || '').trim();
+                        if (a || t) meta += ' ' + a + ' ' + t;
+                        cur = cur.parentElement;
+                    }}
+                    return {{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200, hint: meta.slice(0, 400) }};
+                }});
+            }}""")
+
+            def pick_matching_item(hint_text: str):
+                h_words = {w for w in re.findall(r"[a-z0-9]{4,}", (hint_text or "").lower()) if w not in ("favorite", "more", "options", "reuse", "prompt", "image", "flow")}
+                best_pos = 0
+                best_score = 0
+                if h_words:
+                    for pos, cand in enumerate(pending_items):
+                        p_words = set(re.findall(r"[a-z0-9]{4,}", sanitize_prompt(cand.get("rawPrompt") or cand["fullPrompt"]).lower()))
+                        sc = len(h_words & p_words)
+                        if sc > best_score:
+                            best_score = sc
+                            best_pos = pos
+                return pending_items.pop(best_pos)
+
+            for entry in now_items:
+                src = entry.get("src", "")
+                if not src or src in before_srcs or "/ogw/" in src or "gstatic" in src:
+                    continue
+                if entry.get("tag") == "IMG" and entry.get("w", 0) < 160:
+                    continue
+                before_srcs.add(src)
+                if pending_items:
+                    it = pick_matching_item(entry.get("hint", ""))
+                    last_progress = time.time()
+                    media_val = await _flow_fetch_media_dataurl(page, src)
+                    await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media_val}, item_map, batch_dir, sub_mode)
+
+            if started_flow and not stop_active and (time.time() - last_progress) > 3.5:
+                break
+            if not started_flow and (time.time() - last_progress) > 35:
+                break
+
+        for it in pending_items:
+            if state.should_stop:
+                break
+            try:
+                media = await _flow_submit_ui_shot(page, it, sub_mode, directives=directives, timeout_sec=110)
+                await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
+            except Exception as shot_err:
+                await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
+    else:
+        last_ar = first_ar
+        for it in tab_items:
+            if state.should_stop:
+                break
+            cur_ar = it.get("aspectRatio", "1:1")
+            if cur_ar != last_ar:
+                await _flow_configure(page, cur_ar, is_video=is_video)
+                await _flow_set_agent_mode(page, enable=use_agent)
+                last_ar = cur_ar
+                directives = _build_flow_agent_directives(cur_ar, is_video, options, has_char_img, has_style_img)
+            await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+            try:
+                media = await _flow_submit_ui_shot(page, it, sub_mode, directives=(directives if use_agent else ""), timeout_sec=110)
+                await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
+            except Exception as shot_err:
+                await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
+
+
 async def run_flow_profile_worker(
     profile: Dict[str, Any],
     assigned_items: List[Dict[str, Any]],
@@ -1437,188 +1611,49 @@ async def run_flow_profile_worker(
 ):
     pid = profile["id"]
     options = options or {}
+    use_agent = options.get("useFlowAgent", True)
     async with get_profile_lock(pid):
         ctx = await get_or_open_worker_context(pid)
-        page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        main_page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
+        # Parallel multi-tab concurrency inside the profile: up to 3 tabs in Direct Mode, or up to 2 tabs for large Agent batches (>=4)
+        max_tabs = 1
+        if len(assigned_items) >= 4 and use_agent:
+            max_tabs = 2
+        elif len(assigned_items) >= 2 and not use_agent:
+            max_tabs = min(3, len(assigned_items))
+
+        extra_pages: List[Page] = []
         try:
-            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Opening Google Flow in background Chrome..."})
-            await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(4.5)
-            await _flow_dismiss_banners(page)
-
-            if "accounts.google.com" in (page.url or "").lower():
-                raise RuntimeError("Profile signed out of Google Flow. Click Login for this profile first.")
-
-            # Enter clean project workspace if createNewProject is requested or on home list
-            create_new = options.get("createNewProject", True)
-            proj_name = (options.get("projectName") or "").strip()
-            try:
-                new_btn = page.get_by_role("button", name="New project").first
-                if await new_btn.count() > 0 and (create_new or "/project/" not in (page.url or "")):
-                    await new_btn.scroll_into_view_if_needed()
-                    await new_btn.click(force=True)
-                    for _ in range(25):
-                        await asyncio.sleep(1.0)
-                        if await page.locator('button[aria-label="Flow Agent"]').count() > 0:
-                            break
-                    await _flow_dismiss_banners(page)
-            except Exception:
-                pass
-
-            # Rename Flow project/collection if a projectName was specified in Dashboard
-            if proj_name:
-                try:
-                    coll_inp = page.locator('input[value*="Untitled"], input[placeholder*="Untitled"]').first
-                    if await coll_inp.count() > 0 and await coll_inp.is_visible():
-                        await coll_inp.fill(proj_name[:60])
-                        confirm_rn = page.locator('button[aria-label="Confirm rename"]:visible').first
-                        if await confirm_rn.count() > 0:
-                            await confirm_rn.click()
-                            await asyncio.sleep(0.4)
-                except Exception:
-                    pass
-
-            first_ar = assigned_items[0].get("aspectRatio", "1:1") if assigned_items else "1:1"
-            is_video = "video" in sub_mode
-
-            # Step 1: Lock Mode, Exact Dashboard Aspect Ratio (9:16 Reels / 16:9 Desktop / 1:1 Square), and x1 (1 per prompt)
-            await _flow_configure(page, first_ar, is_video=is_video)
-            # Step 2: Activate Flow Agent Mode ("spark", aria-pressed="true")
-            agent_on = await _flow_set_agent_mode(page, enable=True)
-
-            # Step 3: Attach Dashboard Reference Images (Character, Style, and/or I2V Init Frame) into Flow Agent ingredients
-            has_char_img = False
-            has_style_img = False
-            if options.get("charImageBase64"):
-                has_char_img = await _flow_attach_ingredient_image(page, options["charImageBase64"], prefix="rx_char")
-            if options.get("styleImageBase64"):
-                has_style_img = await _flow_attach_ingredient_image(page, options["styleImageBase64"], prefix="rx_style")
-
-            directives = _build_flow_agent_directives(first_ar, is_video, options, has_char_img, has_style_img)
-            if proj_name:
-                directives = f"Project: {proj_name} | " + directives
-            await broadcast_ws({
-                "type": "DIAGNOSTIC_LOG",
-                "text": f"[{pid}] Flow Agent {'ON' if agent_on else 'Ready'} | {directives[:140]}"
-            })
-
-            media_sel = 'video[src], img[src*="/asb/"], img[src*="flow.google.com"], img[src*="googleusercontent"], img[src*="storage.googleapis"], img[src^="blob:"], img[src^="data:image"]'
-
-            # Batch mode (multi-prompt image generation): paste ALL prompts + Dashboard directives at once into Flow Agent
-            if len(assigned_items) > 1 and not is_video:
-                before_srcs = set(
-                    await page.evaluate(f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)")
-                )
-                for it in assigned_items:
-                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-
-                numbered = "\n".join(
-                    f"{i+1}. {sanitize_prompt(it['rawPrompt'] or it['fullPrompt'])}"
-                    for i, it in enumerate(assigned_items)
-                )
-                batch_msg = (
-                    f"[DASHBOARD REQUIREMENTS LOCKED]\n{directives}\n\n"
-                    f"Generate all {len(assigned_items)} separate images in exact numbered order (do not merge or skip):\n{numbered}"
-                )
-                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Pasted {len(assigned_items)} prompts + Dashboard specs into Flow Agent..."})
-                await _flow_paste_and_submit(page, batch_msg)
-
-                pending_items = list(assigned_items)
-                last_progress = time.time()
-                started_flow = False
-                deadline = time.time() + max(240, len(assigned_items) * 45)
-                while pending_items and time.time() < deadline and not state.should_stop:
-                    await asyncio.sleep(1.5)
-                    await _flow_dismiss_banners(page)
-                    await _flow_click_approve(page)
-
-                    try:
-                        stop_active = await page.locator('button[aria-label="Stop"]:visible, button:has-text("stop"):visible').count() > 0
-                    except Exception:
-                        stop_active = False
-                    if stop_active:
-                        started_flow = True
-                        last_progress = time.time()
-
-                    now_items = await page.evaluate(f"""() => {{
-                        const els = Array.from(document.querySelectorAll('{media_sel}'));
-                        return els.map(el => {{
-                            let meta = el.alt || el.getAttribute('aria-label') || '';
-                            let cur = el.parentElement;
-                            for (let d = 0; d < 5 && cur; d++) {{
-                                const a = Array.from(cur.querySelectorAll('[aria-label]')).map(x => x.getAttribute('aria-label') || '').join(' ');
-                                const t = (cur.innerText || '').trim();
-                                if (a || t) meta += ' ' + a + ' ' + t;
-                                cur = cur.parentElement;
-                            }}
-                            return {{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200, hint: meta.slice(0, 400) }};
-                        }});
-                    }}""")
-
-                    def pick_matching_item(hint_text: str):
-                        h_words = {w for w in re.findall(r"[a-z0-9]{4,}", (hint_text or "").lower()) if w not in ("favorite", "more", "options", "reuse", "prompt", "image", "flow")}
-                        best_pos = 0
-                        best_score = 0
-                        if h_words:
-                            for pos, cand in enumerate(pending_items):
-                                p_words = set(re.findall(r"[a-z0-9]{4,}", sanitize_prompt(cand.get("rawPrompt") or cand["fullPrompt"]).lower()))
-                                sc = len(h_words & p_words)
-                                if sc > best_score:
-                                    best_score = sc
-                                    best_pos = pos
-                        # Flow prepends newest tiles at index 0: if no keyword match & multiple new entries, match newest-first if order inverted
-                        return pending_items.pop(best_pos)
-
-                    for entry in now_items:
-                        src = entry.get("src", "")
-                        if not src or src in before_srcs or "/ogw/" in src or "gstatic" in src:
-                            continue
-                        if entry.get("tag") == "IMG" and entry.get("w", 0) < 160:
-                            continue
-                        before_srcs.add(src)
-                        if pending_items:
-                            it = pick_matching_item(entry.get("hint", ""))
-                            last_progress = time.time()
-                            media_val = await _flow_fetch_media_dataurl(page, src)
-                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media_val}, item_map, batch_dir, sub_mode)
-
-                    if started_flow and not stop_active and (time.time() - last_progress) > 10:
-                        break
-                    if not started_flow and (time.time() - last_progress) > 45:
-                        break
-
-                # Recover any unproduced prompt individually inside Flow Agent or mark failed
-                for it in pending_items:
-                    if state.should_stop:
-                        break
-                    try:
-                        media = await _flow_submit_ui_shot(page, it, sub_mode, directives=directives, timeout_sec=110)
-                        await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
-                    except Exception as shot_err:
-                        await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
+            if max_tabs == 1:
+                await _flow_run_single_tab(pid, main_page, assigned_items, item_map, sub_mode, batch_dir, options, is_primary_tab=True)
             else:
-                last_ar = first_ar
-                for it in assigned_items:
-                    if state.should_stop:
-                        break
-                    cur_ar = it.get("aspectRatio", "1:1")
-                    if cur_ar != last_ar:
-                        await _flow_configure(page, cur_ar, is_video=is_video)
-                        await _flow_set_agent_mode(page, enable=True)
-                        last_ar = cur_ar
-                        directives = _build_flow_agent_directives(cur_ar, is_video, options, has_char_img, has_style_img)
-                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-                    try:
-                        media = await _flow_submit_ui_shot(page, it, sub_mode, directives=directives, timeout_sec=120)
-                        await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
-                    except Exception as shot_err:
-                        await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
-
+                slices: List[List[Dict[str, Any]]] = [[] for _ in range(max_tabs)]
+                for i, item in enumerate(assigned_items):
+                    slices[i % max_tabs].append(item)
+                pages = [main_page]
+                for _ in range(max_tabs - 1):
+                    ep = await ctx.new_page()
+                    extra_pages.append(ep)
+                    pages.append(ep)
+                await broadcast_ws({
+                    "type": "DIAGNOSTIC_LOG",
+                    "text": f"[{pid}] Launching {max_tabs} parallel Flow tabs ({'Agent' if use_agent else 'Direct Fast'}) for {len(assigned_items)} shots..."
+                })
+                await asyncio.gather(*[
+                    _flow_run_single_tab(pid, pg, sl, item_map, sub_mode, batch_dir, options, is_primary_tab=(idx == 0))
+                    for idx, (pg, sl) in enumerate(zip(pages, slices)) if sl
+                ], return_exceptions=True)
         except Exception as err:
             for it in assigned_items:
                 if it.get("status") not in ("done", "failed"):
                     await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(err)}, item_map, batch_dir, sub_mode)
+        finally:
+            for ep in extra_pages:
+                try:
+                    await ep.close()
+                except Exception:
+                    pass
 
 
 # ================= Background Login Watcher =================
@@ -1937,6 +1972,7 @@ class BatchStartReq(BaseModel):
     subMode: str = "image"
     projectName: Optional[str] = "RenderX_Project_01"
     createNewProject: bool = True
+    useFlowAgent: bool = True
     isRetry: bool = False
     negPrompt: Optional[str] = None
     charDesc: Optional[str] = None
@@ -2060,6 +2096,7 @@ async def api_batch_start(req: BatchStartReq):
     options = {
         "projectName": req.projectName,
         "createNewProject": req.createNewProject,
+        "useFlowAgent": req.useFlowAgent,
         "negPrompt": req.negPrompt,
         "charDesc": req.charDesc,
         "styleDesc": req.styleDesc,
