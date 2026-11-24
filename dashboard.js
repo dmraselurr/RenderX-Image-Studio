@@ -1,17 +1,17 @@
 /**
- * RenderX Image Studio - Studio Dashboard Controller (v1.0.9 PRO)
- * Dual-Mode Account Studio (Gemini Canvas & Google Flow)
- * Attached Side Panel Workspace + Keep-Alive + State Persistence
+ * RenderX Image Studio - Desktop Production Studio Controller (v2.0)
+ * Multi-Profile Chrome Cluster (8 Accounts) + Gemini Canvas & Google Flow
+ * Connects to FastAPI/Playwright Backend via REST & WebSocket (Zero Extension Code)
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Application State
   const state = {
     engine: 'gemini-canvas',       // 'gemini-canvas' | 'google-flow'
     subMode: 'image',              // 'image' | 'text-to-video' | 'image-to-video'
     aspectRatio: '1:1',            // '1:1' | '16:9' | '9:16'
     isGenerating: false,
     items: [],
+    profiles: [],
     flowReferenceImage: null,
     charImageBase64: null,
     styleImageBase64: null
@@ -20,19 +20,20 @@ document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
 
   // Topbar Elements
-  const sessionStatusPill = $('sessionStatusPill');
   const sessionDot = $('sessionDot');
   const sessionStatusText = $('sessionStatusText');
-  const btnSidePanelInfo = $('btnSidePanelInfo');
+  const btnOpenOutputs = $('btnSidePanelInfo');
   const sessionInfoBtn = $('sessionInfoBtn');
   const globalResetBtn = $('globalResetBtn');
 
-  // Box 1: Engine & Aspect Elements
+  // Box 1: Engine, Cluster & Aspect Elements
   const btnEngineCanvas = $('btnEngineCanvas');
   const btnEngineFlow = $('btnEngineFlow');
   const engineActiveBadge = $('engineActiveBadge');
   const clusterStateText = $('clusterStateText');
   const clusterProfileName = $('clusterProfileName');
+  const btnManageProfiles = $('btnManageProfiles');
+  const clusterProfilesStrip = $('clusterProfilesStrip');
   const flowSubmodesWrap = $('flowSubmodesWrap');
   const flowSubmodeBtnRow = $('flowSubmodeBtnRow');
   const flowInitFrameSlot = $('flowInitFrameSlot');
@@ -42,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const flowInitFrameRemoveBtn = $('flowInitFrameRemoveBtn');
   const aspectBtnGroup = $('aspectBtnGroup');
 
-  // Box 2: Character Consistency
+  // Box 2 & 3: Character & Style Consistency
   const charToggle = $('charToggle');
   const charPromptText = $('charPromptText');
   const charInputFile = $('charInputFile');
@@ -50,7 +51,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const charPreviewImg = $('charPreviewImg');
   const charRemoveBtn = $('charRemoveBtn');
 
-  // Box 3: Style Consistency
   const styleToggle = $('styleToggle');
   const stylePromptText = $('stylePromptText');
   const styleInputFile = $('styleInputFile');
@@ -82,7 +82,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadZipTopBtn = $('downloadZipTopBtn');
   const pushTimelineBtn = $('pushTimelineBtn');
   const thumbnailGrid = $('thumbnailGrid');
-  const dummyContinuationRow = $('dummyContinuationRow');
 
   // Lightbox Modal
   const lightboxModal = $('lightboxModal');
@@ -95,11 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const lightboxAnimateBtn = $('lightboxAnimateBtn');
   let currentLightboxItem = null;
 
-  // Session Info Modal
+  // Multi-Profile Modal
   const sessionInfoModal = $('sessionInfoModal');
   const closeSessionModalBtn = $('closeSessionModalBtn');
-  const infoGeminiState = $('infoGeminiState');
-  const infoFlowState = $('infoFlowState');
+  const btnAddProfileSlot = $('btnAddProfileSlot');
+  const profilesListContainer = $('profilesListContainer');
 
   // Toast
   const toastCapsule = $('toastCapsule');
@@ -112,126 +111,223 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => toastCapsule.classList.remove('show'), duration);
   }
 
-  // Enforce Real Chrome Extension Context (No localhost illusion)
-  const isExtensionContext = Boolean(window.chrome && chrome.runtime && chrome.runtime.id);
-  document.documentElement.style.scrollBehavior = 'smooth';
-  if (!isExtensionContext) {
-    document.querySelectorAll('#localhostAlertBanner, .extension-context-banner').forEach(el => {
-      el.style.display = 'flex';
-    });
+  function escapeHtml(str) {
+    return String(str || '').replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
   }
 
-  // ================= 1. MV3 Keep-Alive Port & Heartbeat =================
-  let keepAlivePort = null;
-  let heartbeatTimer = null;
-
-  function startKeepAlive() {
-    if (keepAlivePort) return;
-    if (!isExtensionContext || !chrome.runtime.connect) return;
-
-    try {
-      keepAlivePort = chrome.runtime.connect({ name: 'renderx_keepalive' });
-      console.log('[RenderX] KeepAlive long-lived port connected');
-
-      keepAlivePort.onDisconnect.addListener(() => {
-        keepAlivePort = null;
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-        setTimeout(startKeepAlive, 1000);
-      });
-
-      keepAlivePort.onMessage.addListener((msg) => {
-        handleIncomingMessage(msg);
-      });
-
-      // 20s heartbeat ping to keep MV3 service worker active
-      heartbeatTimer = setInterval(() => {
-        if (keepAlivePort) {
-          try {
-            keepAlivePort.postMessage({ type: 'HEARTBEAT', timestamp: Date.now() });
-          } catch (e) {}
-        }
-      }, 20000);
-    } catch (e) {
-      console.warn('[RenderX] KeepAlive connection note:', e);
-    }
+  function updateDiagnosticLine(text, isError = false) {
+    if (!galleryTimelineHint) return;
+    galleryTimelineHint.textContent = text;
+    galleryTimelineHint.style.color = isError ? '#F87171' : '#38BDF8';
   }
 
-  if (isExtensionContext) {
-    startKeepAlive();
-    // Never stay in a standalone 100% full-width dashboard tab — auto-convert into 70vw dock beside Google session
-    const isDockedIframe = (window.self !== window.top) || window.location.search.includes('docked=1');
-    if (!isDockedIframe) {
-      chrome.runtime.sendMessage({ type: 'SWITCH_TO_DOCKED_MODE', engine: state.engine }).catch(() => {});
-    }
-  }
-
-  // Smooth mouse-wheel scrolling anywhere inside 70vw dock (even over headers/toolbars)
+  // Smooth wheel passthrough across panels
   document.addEventListener('wheel', (e) => {
     const sidebarScroll = $('sidebarScroll');
     const galleryContainer = $('galleryContainer');
-    const inTextarea = e.target && (e.target.tagName === 'TEXTAREA' || e.target.closest('#sidebarScroll') || e.target.closest('#galleryContainer'));
-    if (inTextarea) return;
-    const target = (e.clientX < 365) ? sidebarScroll : galleryContainer;
-    if (target) {
-      target.scrollBy({ top: e.deltaY, behavior: 'smooth' });
+    if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.closest('#sidebarScroll') || e.target.closest('#galleryContainer'))) {
+      return;
     }
+    const target = (e.clientX < 365) ? sidebarScroll : galleryContainer;
+    if (target) target.scrollBy({ top: e.deltaY, behavior: 'smooth' });
   }, { passive: true });
 
-  function stopKeepAlive() {
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
-    if (keepAlivePort) {
-      try { keepAlivePort.disconnect(); } catch (e) {}
-      keepAlivePort = null;
-    }
+  // ================= 1. Desktop WebSocket & REST Bridge =================
+  let ws = null;
+
+  function connectWebSocket() {
+    const proto = (window.location.protocol === 'https:') ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${window.location.host}/ws`;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      if (sessionDot) sessionDot.className = 'dot';
+      if (clusterStateText) clusterStateText.textContent = '🟢 Desktop Cluster Online';
+      refreshProfiles();
+    };
+
+    ws.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(ev.data);
+        handleServerEvent(msg);
+      } catch (e) {}
+    };
+
+    ws.onclose = () => {
+      if (sessionDot) sessionDot.className = 'dot amber';
+      if (clusterStateText) clusterStateText.textContent = '🟡 Reconnecting...';
+      setTimeout(connectWebSocket, 1500);
+    };
   }
 
-  // ================= 2. Dual Engine Switching =================
-  function setEngine(engine, notifyHost = true) {
-    state.engine = engine;
+  async function apiJson(path, method = 'GET', body = null) {
+    const opts = { method, headers: {} };
+    if (body !== null) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(path, opts);
+    return await resp.json();
+  }
 
+  // ================= 2. 8-Profile Chrome Cluster Manager =================
+  async function refreshProfiles() {
+    try {
+      const data = await apiJson('/api/profiles');
+      if (data && data.success) {
+        state.profiles = data.profiles || [];
+        renderClusterStrip();
+        renderProfilesModalList();
+      }
+    } catch (e) {}
+  }
+
+  function renderClusterStrip() {
+    const enabledCount = state.profiles.filter(p => p.enabled).length;
+    const loggedCount = state.profiles.filter(p => p.logged_in).length;
+
+    if (clusterProfileName) {
+      clusterProfileName.textContent = `${enabledCount} / ${state.profiles.length} Active (${loggedCount} Logged In)`;
+    }
+
+    if (!clusterProfilesStrip) return;
+    clusterProfilesStrip.innerHTML = '';
+
+    state.profiles.forEach((p, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `profile-slot-pill${p.enabled ? ' enabled' : ''}${p.logged_in ? ' logged-in' : ''}`;
+      btn.title = `${p.name} (${p.logged_in ? 'Logged In' : 'Needs Login'}) - Click to toggle in cluster`;
+      btn.innerHTML = `<span class="profile-slot-dot"></span><span>P${i + 1}</span>`;
+      btn.onclick = async () => {
+        await apiJson(`/api/profiles/${p.id}/toggle`, 'POST', { enabled: !p.enabled });
+        refreshProfiles();
+      };
+      clusterProfilesStrip.appendChild(btn);
+    });
+  }
+
+  function renderProfilesModalList() {
+    if (!profilesListContainer) return;
+    profilesListContainer.innerHTML = '';
+
+    state.profiles.forEach((p, idx) => {
+      const row = document.createElement('div');
+      row.className = 'profile-row-card';
+      row.innerHTML = `
+        <div class="profile-row-left">
+          <input type="checkbox" class="prof-enable-cb" data-id="${p.id}" ${p.enabled ? 'checked' : ''} title="Use in parallel cluster">
+          <div class="profile-row-meta">
+            <div class="profile-row-title">
+              <span>${escapeHtml(p.name)}</span>
+              <span style="font-size:9px; color:#64748B;">#${idx + 1}</span>
+            </div>
+            <div class="profile-row-badges">
+              <span class="p-badge ${p.logged_in ? 'ok' : ''}">${p.logged_in ? '✓ Google Logged In' : 'Guest / Needs Login'}</span>
+              <span class="p-badge ${p.canvas_ready ? 'sync' : ''}">Canvas: ${p.canvas_ready ? 'Synced' : 'Auto'}</span>
+              <span class="p-badge ${p.flow_ready ? 'sync' : ''}">Flow: ${p.flow_ready ? 'Synced' : 'Login Required'}</span>
+            </div>
+          </div>
+        </div>
+        <div class="profile-row-actions">
+          ${p.is_login_open
+            ? `<button type="button" class="btn-prof-action success" data-prof-action="save-close" data-id="${p.id}">✅ Save &amp; Close</button>`
+            : `<button type="button" class="btn-prof-action primary" data-prof-action="login" data-id="${p.id}">🔑 Login Chrome</button>`
+          }
+          <button type="button" class="btn-prof-action danger" data-prof-action="reset" data-id="${p.id}" title="Clear session cookies">🗑️</button>
+        </div>
+      `;
+      profilesListContainer.appendChild(row);
+    });
+  }
+
+  if (profilesListContainer) {
+    profilesListContainer.addEventListener('change', async (e) => {
+      const cb = e.target.closest('.prof-enable-cb');
+      if (!cb) return;
+      await apiJson(`/api/profiles/${cb.dataset.id}/toggle`, 'POST', { enabled: cb.checked });
+      refreshProfiles();
+    });
+
+    profilesListContainer.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-prof-action]');
+      if (!btn) return;
+      const pid = btn.dataset.id;
+      const action = btn.dataset.profAction;
+
+      if (action === 'login') {
+        showToast(`Opening Chrome login window for ${pid}...`);
+        await apiJson(`/api/profiles/${pid}/login`, 'POST', { engine: state.engine });
+        refreshProfiles();
+      } else if (action === 'save-close') {
+        await apiJson(`/api/profiles/${pid}/close-login`, 'POST');
+        showToast(`Saved session for ${pid}`);
+        refreshProfiles();
+      } else if (action === 'reset') {
+        if (confirm(`Reset saved cookies & session for ${pid}?`)) {
+          await apiJson(`/api/profiles/${pid}`, 'DELETE');
+          showToast(`Reset ${pid}`);
+          refreshProfiles();
+        }
+      }
+    });
+  }
+
+  if (btnManageProfiles && sessionInfoModal) {
+    btnManageProfiles.addEventListener('click', () => {
+      refreshProfiles();
+      sessionInfoModal.classList.add('open');
+    });
+  }
+
+  if (btnAddProfileSlot) {
+    btnAddProfileSlot.addEventListener('click', async () => {
+      await apiJson('/api/profiles', 'POST');
+      showToast('Added new Chrome profile slot');
+      refreshProfiles();
+    });
+  }
+
+  if (btnOpenOutputs) {
+    btnOpenOutputs.addEventListener('click', async () => {
+      await apiJson('/api/open-output-folder', 'POST');
+      showToast('Opened Outputs folder');
+    });
+  }
+
+  // ================= 3. Dual Engine Switching =================
+  function setEngine(engine) {
+    state.engine = engine;
     if (engine === 'google-flow') {
       if (btnEngineCanvas) btnEngineCanvas.classList.remove('active');
       if (btnEngineFlow) btnEngineFlow.classList.add('active');
       if (engineActiveBadge) engineActiveBadge.textContent = 'FLOW';
       if (flowSubmodesWrap) flowSubmodesWrap.style.display = 'flex';
-      if (sessionStatusText) sessionStatusText.textContent = 'Google Flow Active Session';
-      if (clusterProfileName) clusterProfileName.textContent = 'Google Flow Account Session';
+      if (sessionStatusText) sessionStatusText.textContent = 'Google Flow (Desktop Cluster)';
       updateGenerateButtonText();
-      if (notifyHost) showToast('Switched to Google Flow Pipeline (Video & Images)');
+      showToast('Switched to Google Flow Cluster Pipeline');
     } else {
       if (btnEngineFlow) btnEngineFlow.classList.remove('active');
       if (btnEngineCanvas) btnEngineCanvas.classList.add('active');
       if (engineActiveBadge) engineActiveBadge.textContent = 'CANVAS';
       if (flowSubmodesWrap) flowSubmodesWrap.style.display = 'none';
-      if (sessionStatusText) sessionStatusText.textContent = 'Gemini Canvas (Free Google Session)';
-      if (clusterProfileName) clusterProfileName.textContent = 'Google Active Session (Zero API Key)';
+      if (sessionStatusText) sessionStatusText.textContent = 'Gemini Canvas (Desktop Cluster)';
       updateGenerateButtonText();
-      if (notifyHost) showToast('Switched to Gemini Canvas Pipeline');
-    }
-
-    if (notifyHost && isExtensionContext && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({ type: 'SWITCH_ENGINE_HOST', engine }).catch(() => {});
+      showToast('Switched to Gemini Canvas Cluster Pipeline');
     }
   }
 
-  if (btnEngineCanvas) btnEngineCanvas.addEventListener('click', () => setEngine('gemini-canvas', true));
-  if (btnEngineFlow) btnEngineFlow.addEventListener('click', () => setEngine('google-flow', true));
+  if (btnEngineCanvas) btnEngineCanvas.addEventListener('click', () => setEngine('gemini-canvas'));
+  if (btnEngineFlow) btnEngineFlow.addEventListener('click', () => setEngine('google-flow'));
 
-  // Flow Sub-Modes
   if (flowSubmodeBtnRow) {
     flowSubmodeBtnRow.addEventListener('click', (e) => {
       const btn = e.target.closest('.btn-submode-opt');
       if (!btn) return;
-
       flowSubmodeBtnRow.querySelectorAll('.btn-submode-opt').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
       state.subMode = btn.dataset.submode;
       if (flowInitFrameSlot) {
         flowInitFrameSlot.style.display = (state.subMode === 'image-to-video') ? 'flex' : 'none';
@@ -241,7 +337,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Flow Reference Frame Upload
   if (flowInitFrameInput) {
     flowInitFrameInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -265,95 +360,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Dock Info Button
-  if (btnSidePanelInfo) {
-    btnSidePanelInfo.addEventListener('click', () => {
-      showToast('RenderX runs in 70vw In-Browser Dock (Zero Extra Tabs)');
-    });
-  }
-
-  function applySyncStatusUI(geminiConnected, flowConnected) {
-    if (sessionDot) {
-      sessionDot.className = (geminiConnected || flowConnected) ? 'dot' : 'dot amber';
-    }
-    if (clusterStateText) {
-      clusterStateText.textContent = (geminiConnected || flowConnected) ? '🟢 RPC Synced (Zero-Tab)' : '🟡 Standby (Needs Sync)';
-    }
-    if (infoGeminiState) infoGeminiState.textContent = geminiConnected ? 'Synced (q4uTj Direct RPC)' : 'Open Canvas Share Once to Sync';
-    if (infoFlowState) infoFlowState.textContent = flowConnected ? 'Synced (Bearer Token Ready)' : 'Open Flow Once to Sync';
-  }
-
-  // Session & Status Check
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-    chrome.runtime.sendMessage({ type: 'CHECK_STATUS' }, (res) => {
-      if (res && res.success) {
-        if (res.activeEngine && res.activeEngine !== state.engine) {
-          setEngine(res.activeEngine, false);
-        }
-        applySyncStatusUI(res.geminiConnected, res.flowConnected);
-      }
-    });
-
-    // Restore Persisted Queue State if SW was restarted
-    chrome.runtime.sendMessage({ type: 'GET_PERSISTED_QUEUE' }, (res) => {
-      if (res && res.success && res.queue && res.queue.items && res.queue.items.length > 0) {
-        const q = res.queue;
-        if (q.isQueueRunning) {
-          state.items = q.items;
-          state.isGenerating = true;
-          state.engine = q.currentEngine || 'gemini-canvas';
-          state.subMode = q.currentSubMode || 'image';
-          renderLiveGrid(state.items);
-
-          state.items.forEach(i => {
-            if (i.status === 'done' && i.dataUrl) {
-              updateCardCompleted(i);
-            } else if (i.status === 'failed') {
-              updateCardFailed(i.index, i.error || 'Failed');
-            } else if (i.index === q.currentShotIndex) {
-              updateCardStatus(i.index, 'Generating...');
-            }
-          });
-
-          updateOverallProgress();
-          startKeepAlive();
-          if (generateBatchBtn) generateBatchBtn.disabled = true;
-          if (stopBatchBtn) stopBatchBtn.disabled = false;
-          showToast('Resumed active queue from local storage');
-        }
-      }
-    });
-  }
-
-  // ================= 3. Aspect Ratio Selection =================
+  // ================= 4. Aspect Ratio & Consistency Controls =================
   if (aspectBtnGroup) {
     aspectBtnGroup.addEventListener('click', (e) => {
       const btn = e.target.closest('.btn-aspect');
       if (!btn) return;
-
       aspectBtnGroup.querySelectorAll('.btn-aspect').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
       state.aspectRatio = btn.dataset.aspect;
-
-      // Update previews in gallery
       const aspectClass = `aspect-${state.aspectRatio === '1:1' ? 'square' : (state.aspectRatio === '16:9' ? 'landscape' : 'portrait')}`;
       document.querySelectorAll('.card-preview').forEach(box => {
         box.className = `card-preview ${aspectClass}`;
       });
-
       showToast(`Aspect set to ${btn.dataset.label}`);
     });
   }
 
-  // ================= 4. Character & Style Reference Uploads =================
   function setupUploadHandler(fileInput, thumbBox, imgEl, removeBtn, stateKey, toastLabel) {
     if (!fileInput || !imgEl) return;
-
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
-
       const reader = new FileReader();
       reader.onload = (ev) => {
         state[stateKey] = ev.target.result;
@@ -363,7 +390,6 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       reader.readAsDataURL(file);
     });
-
     if (removeBtn) {
       removeBtn.addEventListener('click', () => {
         state[stateKey] = null;
@@ -377,7 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupUploadHandler(charInputFile, charPreviewBox, charPreviewImg, charRemoveBtn, 'charImageBase64', 'Character');
   setupUploadHandler(styleInputFile, stylePreviewBox, stylePreviewImg, styleRemoveBtn, 'styleImageBase64', 'Style');
 
-  // ================= 5. Negative Prompts Chips =================
+  // ================= 5. Negative Prompts =================
   function updateNegativeCount() {
     if (!negativeChipsContainer || !negActiveCount) return;
     const activeChips = negativeChipsContainer.querySelectorAll('.chip-tag.active');
@@ -416,7 +442,6 @@ document.addEventListener('DOMContentLoaded', () => {
         let timestamp = `00.${String(idx * 4).padStart(2, '0')}-00.${String((idx + 1) * 4).padStart(2, '0')}`;
         let cleanPrompt = line;
 
-        // Extract [00.00 - 04.35] | Scene X: ... OR [00.00 - 04.35] Scene X: ... OR 00.00-04.35 | ...
         const bracketPipeMatch = line.match(/^\[([0-9.:\-\s]+)\]\s*\|\s*(.+)$/);
         const bracketMatch = line.match(/^\[([0-9.:\-\s]+)\]\s*(.+)$/);
         const pipeMatch = line.match(/^([0-9.:\-\s]+)\s*\|\s*(.+)$/);
@@ -435,7 +460,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const compactTs = timestamp.replace(/\s+/g, '');
         return {
           index: idx + 1,
-          timestamp: timestamp,
+          timestamp,
           cleanTimestamp: compactTs.replace(/[^a-zA-Z0-9.-]/g, '_'),
           rawPrompt: cleanPrompt
         };
@@ -444,9 +469,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updatePromptCount() {
     const raw = promptsTextarea ? promptsTextarea.value : '';
-    const parsed = parsePromptLines(raw);
-    const count = parsed.length;
-
+    const count = parsePromptLines(raw).length;
     if (promptCountBadge) promptCountBadge.textContent = count;
     updateGenerateButtonText(count);
   }
@@ -456,27 +479,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const count = (typeof countOverride === 'number') ? countOverride : parsePromptLines(promptsTextarea ? promptsTextarea.value : '').length;
     const isVideo = (state.engine === 'google-flow' && state.subMode.includes('video'));
     const typeLabel = isVideo ? 'Videos' : 'Images';
-
-    if (count > 0) {
-      generateBtnText.textContent = `⚡ Generate ${count} ${typeLabel}`;
-    } else {
-      generateBtnText.textContent = `⚡ Generate ${typeLabel}`;
-    }
+    generateBtnText.textContent = count > 0 ? `⚡ Generate ${count} ${typeLabel}` : `⚡ Generate ${typeLabel}`;
   }
 
-  if (promptsTextarea) {
-    promptsTextarea.addEventListener('input', updatePromptCount);
-  }
+  if (promptsTextarea) promptsTextarea.addEventListener('input', updatePromptCount);
 
   if (loadSampleScriptBtn && promptsTextarea) {
     loadSampleScriptBtn.addEventListener('click', () => {
-      const sample = `00.00-04.35 | Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field
+      promptsTextarea.value = `00.00-04.35 | Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field
 04.35-07.83 | Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting
 07.83-11.74 | Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric haze
 11.74-16.52 | Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh
 16.52-22.94 | Scene 5: Golden hour dramatic sunset with volumetric rim light`;
-
-      promptsTextarea.value = sample;
       updatePromptCount();
       showToast('Loaded 5 sample timeline scenes');
     });
@@ -485,129 +499,15 @@ document.addEventListener('DOMContentLoaded', () => {
   if (autoSyncBtn && promptsTextarea) {
     autoSyncBtn.addEventListener('click', () => {
       const lines = parsePromptLines(promptsTextarea.value);
-      if (lines.length === 0) {
-        showToast('No prompts to sync');
-        return;
-      }
+      if (lines.length === 0) return showToast('No prompts to sync');
       promptsTextarea.value = lines.map(l => `${l.timestamp} | ${l.rawPrompt}`).join('\n');
       updatePromptCount();
       showToast('Timestamps formatted cleanly');
     });
   }
 
-  // ================= 7. Standby Grid & Continuation Arrow =================
-  const standbyCardsHTML = `
-    <!-- Row 1: Exactly 4 Default Standby Dummy Cards -->
-    <div class="image-card dummy-card">
-      <div class="card-header-bar">
-        <span class="timestamp-badge">🛡️ 00.00 - 04.35</span>
-        <span class="badge-standby">Standby</span>
-      </div>
-      <div class="card-preview aspect-square">
-        <div class="dummy-preview">
-          <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <span>Shot #1 Ready</span>
-        </div>
-      </div>
-      <div class="card-meta">
-        <div class="card-fn-row"><span class="card-filename">📁 01_00.00-04.35.png</span><span class="card-idx">#01</span></div>
-        <p class="card-prompt-text">Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field...</p>
-        <div class="card-actions-single-row">
-          <button type="button" class="btn-card-action" data-action="edit" data-index="1">✏️ Edit</button>
-          <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="1">🎲 Re-Roll</button>
-          <button type="button" class="btn-card-action" data-action="save" data-index="1">💾 Save</button>
-        </div>
-        <div class="card-check-row">
-          <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-          <label class="check-label"><input type="checkbox"> Auto Merge</label>
-        </div>
-      </div>
-    </div>
-
-    <div class="image-card dummy-card">
-      <div class="card-header-bar">
-        <span class="timestamp-badge">🛡️ 04.35 - 07.83</span>
-        <span class="badge-standby">Standby</span>
-      </div>
-      <div class="card-preview aspect-square">
-        <div class="dummy-preview">
-          <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <span>Shot #2 Ready</span>
-        </div>
-      </div>
-      <div class="card-meta">
-        <div class="card-fn-row"><span class="card-filename">📁 02_04.35-07.83.png</span><span class="card-idx">#02</span></div>
-        <p class="card-prompt-text">Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting...</p>
-        <div class="card-actions-single-row">
-          <button type="button" class="btn-card-action" data-action="edit" data-index="2">✏️ Edit</button>
-          <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="2">🎲 Re-Roll</button>
-          <button type="button" class="btn-card-action" data-action="save" data-index="2">💾 Save</button>
-        </div>
-        <div class="card-check-row">
-          <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-          <label class="check-label"><input type="checkbox"> Auto Merge</label>
-        </div>
-      </div>
-    </div>
-
-    <div class="image-card dummy-card">
-      <div class="card-header-bar">
-        <span class="timestamp-badge">🛡️ 07.83 - 11.74</span>
-        <span class="badge-standby">Standby</span>
-      </div>
-      <div class="card-preview aspect-square">
-        <div class="dummy-preview">
-          <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <span>Shot #3 Ready</span>
-        </div>
-      </div>
-      <div class="card-meta">
-        <div class="card-fn-row"><span class="card-filename">📁 03_07.83-11.74.png</span><span class="card-idx">#03</span></div>
-        <p class="card-prompt-text">Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric haze...</p>
-        <div class="card-actions-single-row">
-          <button type="button" class="btn-card-action" data-action="edit" data-index="3">✏️ Edit</button>
-          <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="3">🎲 Re-Roll</button>
-          <button type="button" class="btn-card-action" data-action="save" data-index="3">💾 Save</button>
-        </div>
-        <div class="card-check-row">
-          <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-          <label class="check-label"><input type="checkbox"> Auto Merge</label>
-        </div>
-      </div>
-    </div>
-
-    <div class="image-card dummy-card">
-      <div class="card-header-bar">
-        <span class="timestamp-badge">🛡️ 11.74 - 16.52</span>
-        <span class="badge-standby">Standby</span>
-      </div>
-      <div class="card-preview aspect-square">
-        <div class="dummy-preview">
-          <svg fill="currentColor" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <span>Shot #4 Ready</span>
-        </div>
-      </div>
-      <div class="card-meta">
-        <div class="card-fn-row"><span class="card-filename">📁 04_11.74-16.52.png</span><span class="card-idx">#04</span></div>
-        <p class="card-prompt-text">Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh...</p>
-        <div class="card-actions-single-row">
-          <button type="button" class="btn-card-action" data-action="edit" data-index="4">✏️ Edit</button>
-          <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="4">🎲 Re-Roll</button>
-          <button type="button" class="btn-card-action" data-action="save" data-index="4">💾 Save</button>
-        </div>
-        <div class="card-check-row">
-          <label class="check-label"><input type="checkbox" checked> Final Cut</label>
-          <label class="check-label"><input type="checkbox"> Auto Merge</label>
-        </div>
-      </div>
-    </div>
-
-    <!-- Prominent Centered Circular Down Arrow (Row 2 Continuation Indicator) -->
-    <div class="dummy-continuation-row" id="dummyContinuationRow">
-      <div class="dummy-arrow-circle">↓</div>
-      <div class="dummy-continuation-text">Standby: Images will populate dynamically in 4-column rows upon generation</div>
-    </div>
-  `;
+  // ================= 7. Standby Grid =================
+  const standbyCardsHTML = thumbnailGrid ? thumbnailGrid.innerHTML : '';
 
   function resetGalleryToStandby() {
     state.items = [];
@@ -617,10 +517,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (progressBarFill) progressBarFill.style.width = '0%';
     if (downloadZipBtn) downloadZipBtn.disabled = true;
     if (downloadZipTopBtn) downloadZipTopBtn.disabled = true;
-
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({ type: 'CLEAR_PERSISTED_QUEUE' });
-    }
   }
 
   if (clearGalleryBtn) {
@@ -641,11 +537,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // ================= 8. Live 4-Column Grid Rendering =================
+  // ================= 8. Live Gallery Cards =================
   function renderLiveGrid(items) {
     if (!thumbnailGrid) return;
     thumbnailGrid.innerHTML = '';
-
     const isVideo = (state.engine === 'google-flow' && state.subMode.includes('video'));
     const ext = isVideo ? 'mp4' : 'png';
     const aspectClass = `aspect-${state.aspectRatio === '1:1' ? 'square' : (state.aspectRatio === '16:9' ? 'landscape' : 'portrait')}`;
@@ -654,14 +549,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const card = document.createElement('div');
       card.className = 'image-card';
       card.id = `card-${item.index}`;
-
       const paddedIdx = String(item.index).padStart(2, '0');
       const filename = `${paddedIdx}_${item.cleanTimestamp}.${ext}`;
       item.filename = filename;
 
       card.innerHTML = `
         <div class="card-header-bar">
-          <span class="timestamp-badge">🛡️ ${item.timestamp}</span>
+          <span class="timestamp-badge">🛡️ ${escapeHtml(item.timestamp)}</span>
           <span class="badge-generating" id="badge-${item.index}">Generating...</span>
         </div>
         <div class="card-preview ${aspectClass}" id="previewBox-${item.index}">
@@ -672,10 +566,10 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
         <div class="card-meta">
           <div class="card-fn-row">
-            <span class="card-filename">📁 ${filename}</span>
+            <span class="card-filename">📁 ${escapeHtml(filename)}</span>
             <span class="card-idx">#${paddedIdx}</span>
           </div>
-          <p class="card-prompt-text" title="${item.rawPrompt}">${item.rawPrompt}</p>
+          <p class="card-prompt-text" title="${escapeHtml(item.rawPrompt)}">${escapeHtml(item.rawPrompt)}</p>
           <div class="card-actions-single-row">
             <button type="button" class="btn-card-action" data-action="edit" data-index="${item.index}">✏️ Edit</button>
             <button type="button" class="btn-card-action btn-regen" data-action="retry" data-index="${item.index}">🎲 Re-Roll</button>
@@ -688,7 +582,6 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         </div>
       `;
-
       thumbnailGrid.appendChild(card);
     });
   }
@@ -699,7 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const badge = document.getElementById(`badge-${index}`);
     if (badge) {
       badge.className = 'badge-generating';
-      badge.textContent = statusText.includes('Attempt') ? statusText : 'Generating...';
+      badge.textContent = statusText;
     }
   }
 
@@ -707,12 +600,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const previewBox = document.getElementById(`previewBox-${item.index}`);
     const badge = document.getElementById(`badge-${item.index}`);
     if (!previewBox) return;
-
     if (badge) {
       badge.className = 'badge-done';
       badge.textContent = 'Ready';
     }
-
     previewBox.innerHTML = '';
 
     if (item.mediaType === 'video') {
@@ -738,51 +629,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function escapeHtml(str) {
-    return String(str || '').replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-  }
-
-  function updateDiagnosticLine(text, isError = false) {
-    if (!galleryTimelineHint) return;
-    galleryTimelineHint.textContent = text;
-    galleryTimelineHint.style.color = isError ? '#F87171' : '#38BDF8';
-  }
-
   function updateCardFailed(index, errorMsg, httpStatus = 0) {
     const previewBox = document.getElementById(`previewBox-${index}`);
     const badge = document.getElementById(`badge-${index}`);
     if (!previewBox) return;
-
-    const statusLabel = httpStatus ? `HTTP ${httpStatus}` : 'Failed';
     if (badge) {
       badge.className = 'badge-standby';
-      badge.textContent = statusLabel;
+      badge.textContent = httpStatus ? `HTTP ${httpStatus}` : 'Failed';
       badge.style.color = '#EF4444';
       badge.style.borderColor = '#EF4444';
     }
-
-    const safeErr = escapeHtml(errorMsg || 'Request failed');
     previewBox.innerHTML = `
       <div style="padding:10px; text-align:center; display:flex; flex-direction:column; gap:4px; overflow-y:auto; max-height:100%;">
         <span style="color:#F87171; font-weight:800; font-size:9.5px;">${httpStatus ? `Shot Failed (HTTP ${httpStatus})` : 'Shot Failed'}</span>
-        <span style="font-size:8px; color:var(--text-muted); line-height:1.25; word-break:break-word;">${safeErr}</span>
+        <span style="font-size:8px; color:var(--text-muted); line-height:1.25; word-break:break-word;">${escapeHtml(errorMsg)}</span>
       </div>
     `;
   }
 
   // ================= 9. Batch Queue Execution =================
   window.triggerGenerateBatch = async function () {
-    if (!isExtensionContext) {
-      showToast('Please open RenderX via the Chrome Extension icon, not localhost.', 4000);
-      return;
-    }
-
-    if (state.isGenerating) {
-      showToast('Generation already in progress');
-      return;
-    }
+    if (state.isGenerating) return showToast('Generation already in progress');
 
     const raw = promptsTextarea ? promptsTextarea.value.trim() : '';
     if (!raw) {
@@ -792,10 +659,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const parsed = parsePromptLines(raw);
-    if (parsed.length === 0) {
-      showToast('No valid prompts detected');
-      return;
-    }
+    if (parsed.length === 0) return showToast('No valid prompts detected');
 
     const negPrompt = getCombinedNegativePrompt();
     const charPrompt = (charToggle && charToggle.checked && charPromptText) ? charPromptText.value.trim() : '';
@@ -806,7 +670,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (charPrompt) finalPrompt = `${charPrompt}, ${finalPrompt}`;
       if (stylePrompt) finalPrompt = `${finalPrompt}, in the style of ${stylePrompt}`;
       if (negPrompt) finalPrompt = `${finalPrompt} --no ${negPrompt}`;
-
       return {
         ...p,
         fullPrompt: finalPrompt,
@@ -825,29 +688,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (progressBarFill) progressBarFill.style.width = '0%';
     if (galleryReadyPill) galleryReadyPill.textContent = `0 / ${state.items.length} READY (GENERATING...)`;
 
-    // Immediately render all N spinning cards simultaneously
     renderLiveGrid(state.items);
-    startKeepAlive();
-    showToast(`Dispatching ${state.items.length} shots via Zero-Tab Direct ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'} Engine...`, 2800);
+    const activeProfiles = state.profiles.filter(p => p.enabled).length || 1;
+    showToast(`Launching ${state.items.length} shots across ${activeProfiles} Chrome profile(s)...`);
 
-    // Send queue to background service worker
-    chrome.runtime.sendMessage({
-      type: 'START_BATCH_QUEUE',
+    const resp = await apiJson('/api/batch/start', 'POST', {
       items: state.items,
       engine: state.engine,
       subMode: state.subMode
     });
+    if (!resp || !resp.success) {
+      showToast(resp?.error || 'Could not start batch');
+      finishQueue();
+    }
   };
 
-  if (generateBatchBtn) {
-    generateBatchBtn.addEventListener('click', window.triggerGenerateBatch);
-  }
+  if (generateBatchBtn) generateBatchBtn.addEventListener('click', window.triggerGenerateBatch);
 
   if (stopBatchBtn) {
-    stopBatchBtn.addEventListener('click', () => {
-      if (isExtensionContext && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ type: 'STOP_BATCH_QUEUE' });
-      }
+    stopBatchBtn.addEventListener('click', async () => {
+      await apiJson('/api/batch/stop', 'POST');
       state.isGenerating = false;
       if (generateBatchBtn) generateBatchBtn.disabled = false;
       if (stopBatchBtn) stopBatchBtn.disabled = true;
@@ -855,20 +715,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Receive Background Messages (via Runtime & Ports)
-  function handleIncomingMessage(msg) {
+  function handleServerEvent(msg) {
     if (!msg) return;
-
-    if (msg.type === 'ITEM_STATUS_UPDATE' || msg.type === 'ITEM_STATUS') {
-      const item = state.items.find(i => i.index === msg.index);
-      if (item && item.status !== 'done') {
-        updateCardStatus(msg.index, msg.status);
-      }
+    if (msg.type === 'PROFILES_UPDATED') {
+      refreshProfiles();
     } else if (msg.type === 'ITEM_STARTED') {
       const item = state.items.find(i => i.index === msg.index);
-      if (item && item.status !== 'done') {
-        updateCardStatus(msg.index, 'Generating...');
-      }
+      if (item && item.status !== 'done') updateCardStatus(msg.index, 'Generating...');
     } else if (msg.type === 'ITEM_COMPLETED') {
       const item = state.items.find(i => i.index === msg.index);
       if (item) {
@@ -881,28 +734,15 @@ document.addEventListener('DOMContentLoaded', () => {
       updateOverallProgress();
     } else if (msg.type === 'ITEM_FAILED') {
       const item = state.items.find(i => i.index === msg.index);
-      if (item) {
-        if (item.status === 'done') return;
-        item.status = 'failed';
-      }
-      updateCardFailed(msg.index, msg.error || 'Automation timeout', msg.httpStatus || 0);
-      updateDiagnosticLine(`Shot #${msg.index} Error: ${msg.error || ('HTTP ' + (msg.httpStatus || 'ERR'))}`, true);
+      if (item && item.status !== 'done') item.status = 'failed';
+      updateCardFailed(msg.index, msg.error || 'Failed', msg.httpStatus || 0);
+      updateDiagnosticLine(`Shot #${msg.index} Error: ${msg.error}`, true);
       updateOverallProgress();
     } else if (msg.type === 'DIAGNOSTIC_LOG') {
       updateDiagnosticLine(msg.text || '', Boolean(msg.isError));
-    } else if (msg.type === 'SYNC_STATUS_UPDATED') {
-      applySyncStatusUI(msg.geminiSynced, msg.flowSynced);
-      updateDiagnosticLine('RPC Protocol Synced (MAIN-World Ready)');
-      showToast('Session RPC protocol synced (Zero-Tab Ready!)');
     } else if (msg.type === 'QUEUE_FINISHED') {
       finishQueue();
     }
-  }
-
-  if (isExtensionContext && chrome.runtime.onMessage) {
-    chrome.runtime.onMessage.addListener((msg) => {
-      handleIncomingMessage(msg);
-    });
   }
 
   function updateOverallProgress() {
@@ -910,7 +750,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (total === 0) return;
     const completed = state.items.filter(i => i.status === 'done').length;
     const pct = Math.round((completed / total) * 100);
-
     if (progressBarFill) progressBarFill.style.width = `${pct}%`;
     if (completed > 0) {
       if (downloadZipBtn) downloadZipBtn.disabled = false;
@@ -927,88 +766,53 @@ document.addEventListener('DOMContentLoaded', () => {
     state.isGenerating = false;
     if (generateBatchBtn) generateBatchBtn.disabled = false;
     if (stopBatchBtn) stopBatchBtn.disabled = true;
-
-    const completed = state.items.filter(i => i.status === 'done').length;
-    if (completed > 0) {
-      if (downloadZipBtn) downloadZipBtn.disabled = false;
-      if (downloadZipTopBtn) downloadZipTopBtn.disabled = false;
-    }
     updateOverallProgress();
-    showToast(`Batch completed: ${completed} shots ready`);
+    const completed = state.items.filter(i => i.status === 'done').length;
+    showToast(`Batch completed: ${completed} shots saved to outputs/`);
   }
 
-  // ================= 11. Individual Card Tool Actions =================
+  // ================= 10. Individual Card Actions =================
   if (thumbnailGrid) {
-    thumbnailGrid.addEventListener('click', (e) => {
+    thumbnailGrid.addEventListener('click', async (e) => {
       const btn = e.target.closest('.btn-card-action');
       if (!btn) return;
-
       const action = btn.dataset.action;
       const index = parseInt(btn.dataset.index, 10);
       const item = state.items.find(i => i.index === index);
 
       if (action === 'save') {
-        if (item && item.dataUrl) {
-          downloadDataUrl(item.dataUrl, item.filename || `shot_${index}.png`);
-        } else {
-          showToast(`Shot #${index} not yet ready to save`);
+        if (item && item.dataUrl) downloadDataUrl(item.dataUrl, item.filename || `shot_${index}.png`);
+        else showToast(`Shot #${index} not yet ready`);
+      } else if (action === 'retry' && item) {
+        if (state.isGenerating) return showToast('Wait for active batch or click Stop first');
+        item.status = 'generating';
+        item.dataUrl = null;
+        const previewBox = document.getElementById(`previewBox-${index}`);
+        if (previewBox) {
+          previewBox.innerHTML = `<div class="card-spinner" id="spinner-${index}"><div class="spin-circle"></div><span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${index}">Retrying...</span></div>`;
         }
-      } else if (action === 'retry') {
-        if (!isExtensionContext) {
-          showToast('Please open RenderX via the Chrome Extension icon, not localhost.');
-          return;
+        updateCardStatus(index, 'Retrying...');
+        state.isGenerating = true;
+        await apiJson('/api/batch/start', 'POST', { items: [item], engine: state.engine, subMode: state.subMode });
+      } else if (action === 'animate' && item && item.dataUrl) {
+        setEngine('google-flow');
+        state.subMode = 'image-to-video';
+        state.flowReferenceImage = item.dataUrl;
+        if (flowSubmodeBtnRow) {
+          flowSubmodeBtnRow.querySelectorAll('.btn-submode-opt').forEach(b => b.classList.toggle('active', b.dataset.submode === 'image-to-video'));
         }
-        if (item) {
-          showToast(`Re-rolling Shot #${index}...`);
-          item.status = 'generating';
-          item.dataUrl = null;
-          const previewBox = document.getElementById(`previewBox-${index}`);
-          if (previewBox) {
-            previewBox.innerHTML = `
-              <div class="card-spinner" id="spinner-${index}">
-                <div class="spin-circle"></div>
-                <span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${index}">Retrying...</span>
-              </div>
-            `;
-          }
-          updateCardStatus(index, 'Retrying...');
-          startKeepAlive();
-          chrome.runtime.sendMessage({
-            type: 'START_BATCH_QUEUE',
-            items: [item],
-            engine: state.engine,
-            subMode: state.subMode
-          });
-        }
-      } else if (action === 'animate') {
-        if (item && item.dataUrl) {
-          setEngine('google-flow');
-          state.subMode = 'image-to-video';
-          state.flowReferenceImage = item.dataUrl;
-
-          if (flowSubmodeBtnRow) {
-            flowSubmodeBtnRow.querySelectorAll('.btn-submode-opt').forEach(b => {
-              b.classList.toggle('active', b.dataset.submode === 'image-to-video');
-            });
-          }
-          if (flowInitFrameSlot) flowInitFrameSlot.style.display = 'flex';
-          if (flowInitFrameImg) flowInitFrameImg.src = item.dataUrl;
-          if (flowInitFramePreview) flowInitFramePreview.style.display = 'flex';
-
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-          showToast(`Shot #${index} transferred to Google Flow Image-to-Video!`, 3500);
-        } else {
-          showToast('Image must finish generating before animating');
-        }
-      } else if (action === 'edit') {
-        if (item) {
-          const newPrompt = prompt(`Edit prompt for Shot #${index}:`, item.rawPrompt);
-          if (newPrompt && newPrompt !== item.rawPrompt) {
-            item.rawPrompt = newPrompt;
-            const snip = document.querySelector(`#card-${index} .card-prompt-text`);
-            if (snip) snip.textContent = newPrompt;
-            showToast(`Shot #${index} prompt updated`);
-          }
+        if (flowInitFrameSlot) flowInitFrameSlot.style.display = 'flex';
+        if (flowInitFrameImg) flowInitFrameImg.src = item.dataUrl;
+        if (flowInitFramePreview) flowInitFramePreview.style.display = 'flex';
+        showToast(`Shot #${index} loaded into Google Flow Image-to-Video`);
+      } else if (action === 'edit' && item) {
+        const newPrompt = prompt(`Edit prompt for Shot #${index}:`, item.rawPrompt);
+        if (newPrompt && newPrompt !== item.rawPrompt) {
+          item.rawPrompt = newPrompt;
+          item.fullPrompt = newPrompt;
+          const snip = document.querySelector(`#card-${index} .card-prompt-text`);
+          if (snip) snip.textContent = newPrompt;
+          showToast(`Shot #${index} prompt updated`);
         }
       }
     });
@@ -1023,85 +827,52 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.removeChild(a);
   }
 
-  // ================= 12. Multi-Format Sequential ZIP Exporter =================
   async function downloadBatchZip() {
     const readyItems = state.items.filter(i => i.status === 'done' && i.dataUrl);
-    if (readyItems.length === 0) {
-      showToast('No rendered media ready to download');
-      return;
-    }
+    if (readyItems.length === 0) return showToast('No rendered media ready to download');
+    if (typeof JSZip === 'undefined') return showToast('ZIP engine missing');
 
-    if (typeof JSZip === 'undefined') {
-      showToast('Loading ZIP engine...');
-      return;
-    }
-
-    showToast(`Bundling ${readyItems.length} files into ZIP archive...`);
     const zip = new JSZip();
-
-    // Add Timeline Metadata CSV
-    let csvContent = 'Index,Timestamp,Filename,MediaType,Prompt\n';
-
+    let csv = 'Index,Timestamp,Filename,MediaType,Prompt\n';
     readyItems.forEach(item => {
       const ext = item.mediaType === 'video' ? 'mp4' : 'png';
-      const cleanFn = item.filename || `shot_${item.index}.${ext}`;
-      const safePrompt = `"${item.rawPrompt.replace(/"/g, '""')}"`;
-      csvContent += `${item.index},${item.timestamp},${cleanFn},${item.mediaType},${safePrompt}\n`;
-
-      if (item.dataUrl.startsWith('data:')) {
-        const b64Data = item.dataUrl.split(',')[1];
-        zip.file(cleanFn, b64Data, { base64: true });
-      } else {
-        zip.file(cleanFn, item.dataUrl);
-      }
+      const fn = item.filename || `shot_${item.index}.${ext}`;
+      csv += `${item.index},${item.timestamp},${fn},${item.mediaType},"${item.rawPrompt.replace(/"/g, '""')}"\n`;
+      if (item.dataUrl.startsWith('data:')) zip.file(fn, item.dataUrl.split(',')[1], { base64: true });
+      else zip.file(fn, item.dataUrl);
     });
-
-    zip.file('timeline_metadata.csv', csvContent);
+    zip.file('timeline_metadata.csv', csv);
 
     const blob = await zip.generateAsync({ type: 'blob' });
-    const blobUrl = URL.createObjectURL(blob);
-    const dateStr = new Date().toISOString().slice(0, 10);
-    const zipName = `RenderX_Studio_Shots_${dateStr}.zip`;
-
-    downloadDataUrl(blobUrl, zipName);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-    showToast(`Downloaded ${zipName}`);
+    const url = URL.createObjectURL(blob);
+    downloadDataUrl(url, `RenderX_Studio_Shots_${new Date().toISOString().slice(0, 10)}.zip`);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
   if (downloadZipBtn) downloadZipBtn.addEventListener('click', downloadBatchZip);
   if (downloadZipTopBtn) downloadZipTopBtn.addEventListener('click', downloadBatchZip);
-
   if (pushTimelineBtn) {
-    pushTimelineBtn.addEventListener('click', () => {
-      showToast('Exporting shots to Video Production Timeline...');
+    pushTimelineBtn.addEventListener('click', async () => {
+      await apiJson('/api/open-output-folder', 'POST');
       downloadBatchZip();
     });
   }
 
-  // ================= 13. Lightbox Modal =================
+  // ================= 11. Lightbox & Profile Modals =================
   function openLightbox(item) {
     currentLightboxItem = item;
     if (!lightboxModal) return;
-
     if (lightboxTitle) lightboxTitle.textContent = `${item.filename || 'Shot'} (${item.timestamp})`;
     if (lightboxPromptText) lightboxPromptText.textContent = item.rawPrompt;
-
     if (item.mediaType === 'video') {
       if (lightboxImg) lightboxImg.style.display = 'none';
-      if (lightboxVideo) {
-        lightboxVideo.style.display = 'block';
-        lightboxVideo.src = item.dataUrl;
-      }
+      if (lightboxVideo) { lightboxVideo.style.display = 'block'; lightboxVideo.src = item.dataUrl; }
       if (lightboxAnimateBtn) lightboxAnimateBtn.style.display = 'none';
     } else {
       if (lightboxVideo) lightboxVideo.style.display = 'none';
-      if (lightboxImg) {
-        lightboxImg.style.display = 'block';
-        lightboxImg.src = item.dataUrl;
-      }
+      if (lightboxImg) { lightboxImg.style.display = 'block'; lightboxImg.src = item.dataUrl; }
       if (lightboxAnimateBtn) lightboxAnimateBtn.style.display = 'inline-block';
     }
-
     lightboxModal.classList.add('open');
   }
 
@@ -1130,21 +901,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (flowInitFrameSlot) flowInitFrameSlot.style.display = 'flex';
         if (flowInitFrameImg) flowInitFrameImg.src = currentLightboxItem.dataUrl;
         if (flowInitFramePreview) flowInitFramePreview.style.display = 'flex';
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        showToast('Image ready in Google Flow Image-to-Video queue!');
+        showToast('Image ready in Google Flow Image-to-Video queue');
       }
     });
   }
 
-  // Session Info Modal
   if (sessionInfoBtn && sessionInfoModal) {
-    sessionInfoBtn.addEventListener('click', () => sessionInfoModal.classList.add('open'));
+    sessionInfoBtn.addEventListener('click', () => {
+      refreshProfiles();
+      sessionInfoModal.classList.add('open');
+    });
   }
   if (closeSessionModalBtn && sessionInfoModal) {
     closeSessionModalBtn.addEventListener('click', () => sessionInfoModal.classList.remove('open'));
   }
 
-  // Close modals on backdrop click
   document.querySelectorAll('.modal-overlay').forEach(modal => {
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
@@ -1154,7 +925,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Initial call
+  // Init
   updatePromptCount();
   updateNegativeCount();
+  connectWebSocket();
 });
