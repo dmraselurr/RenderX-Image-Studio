@@ -1,71 +1,81 @@
 /**
- * RenderX Image Studio - Pollinations FLUX.1 Engine
- * Free, high-speed, zero-API-key image generation using FLUX.1 Schnell & Dev.
+ * RenderX Image Studio - Resilient Free Options Engine
+ * Multi-endpoint fallback: Pollinations FLUX.1 + Turbo + Free Serverless
+ * Prevents 402 Payment Required errors from stopping generation batches.
  */
 
 class PollinationsEngine {
   static getDimensions(aspectRatio) {
     switch (aspectRatio) {
       case 'portrait':
-        return { width: 768, height: 1344 }; // 9:16 ratio
-      case 'landscape':
-        return { width: 1344, height: 768 }; // 16:9 ratio
+        return { width: 768, height: 1344 };
       case 'square':
+        return { width: 1024, height: 1024 };
+      case 'landscape':
       default:
-        return { width: 1024, height: 1024 }; // 1:1 ratio
+        return { width: 1344, height: 768 };
     }
   }
 
   /**
-   * Generate an image using Pollinations FLUX.1
-   * @param {string} prompt - Full positive prompt
-   * @param {Object} options - { aspectRatio, negativePrompt, seed }
+   * Generate an image using free serverless models with multi-endpoint fallback
+   * @param {string} prompt 
+   * @param {Object} options 
    * @returns {Promise<Blob>}
    */
   static async generate(prompt, options = {}) {
-    const { aspectRatio = 'square', negativePrompt = '', seed = null } = options;
+    const { aspectRatio = 'landscape', negativePrompt = '', seed = null } = options;
     const { width, height } = PollinationsEngine.getDimensions(aspectRatio);
 
-    // Build enriched prompt with negative guidance if supplied
-    let fullPrompt = prompt;
+    // Sanitize and clean prompt length to avoid URL 402/414 limits
+    let cleanPrompt = prompt.trim().slice(0, 450);
     if (negativePrompt && negativePrompt.trim()) {
-      fullPrompt += ` | avoid: ${negativePrompt.trim()}`;
+      cleanPrompt += `, avoid: ${negativePrompt.trim().slice(0, 100)}`;
     }
 
-    const randomSeed = seed !== null ? seed : Math.floor(Math.random() * 1000000);
-    const encodedPrompt = encodeURIComponent(fullPrompt);
+    const randomSeed = seed !== null ? seed : Math.floor(Math.random() * 999999);
+    const encodedPrompt = encodeURIComponent(cleanPrompt);
 
-    // Pollinations image generation endpoint with FLUX model
-    const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&seed=${randomSeed}&nologo=true&enhance=false`;
+    // List of resilient free endpoints and model variants
+    const candidateUrls = [
+      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&seed=${randomSeed}&nologo=true`,
+      `https://gen.pollinations.ai/image/${encodedPrompt}?width=${width}&height=${height}&model=flux&seed=${randomSeed}&nologo=true`,
+      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=turbo&seed=${randomSeed}&nologo=true`,
+      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true`
+    ];
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000); // 45s timeout
+    let lastError = null;
 
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: {
-          'Accept': 'image/jpeg, image/png, image/webp, */*'
+    for (const url of candidateUrls) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000);
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Accept': 'image/jpeg, image/png, image/webp, */*'
+          }
+        });
+
+        clearTimeout(timeout);
+
+        if (response.ok) {
+          const blob = await response.blob();
+          if (blob && blob.size > 1500) {
+            return blob;
+          }
+        } else {
+          lastError = new Error(`HTTP ${response.status}`);
         }
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`Pollinations HTTP Error: ${response.status} ${response.statusText}`);
+      } catch (err) {
+        clearTimeout(timeout);
+        lastError = err;
       }
-
-      const blob = await response.blob();
-      if (!blob || blob.size < 1000) {
-        throw new Error('Received invalid or empty image from Pollinations');
-      }
-
-      return blob;
-    } catch (err) {
-      clearTimeout(timeout);
-      throw new Error(`Pollinations Generation Failed: ${err.message}`);
     }
+
+    throw new Error(`Free Options Engine exhausted candidates: ${lastError?.message || 'Failed'}`);
   }
 }
 
