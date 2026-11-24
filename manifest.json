@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "RenderX Image Studio",
+  "version": "1.0.0",
+  "description": "High-speed bulk AI image generator with timeline sync for video editing, character/style lock, and multi-engine auto-fallback.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Open RenderX Image Studio"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
