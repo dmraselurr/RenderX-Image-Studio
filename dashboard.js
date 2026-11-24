@@ -112,23 +112,34 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => toastCapsule.classList.remove('show'), duration);
   }
 
+  // Enforce Real Chrome Extension Context (No localhost illusion)
+  const isExtensionContext = Boolean(window.chrome && chrome.runtime && chrome.runtime.id);
+  document.documentElement.style.scrollBehavior = 'smooth';
+  if (!isExtensionContext) {
+    document.querySelectorAll('#localhostAlertBanner, .extension-context-banner').forEach(el => {
+      el.style.display = 'flex';
+    });
+  }
+
   // ================= 1. MV3 Keep-Alive Port & Heartbeat =================
   let keepAlivePort = null;
   let heartbeatTimer = null;
 
   function startKeepAlive() {
     if (keepAlivePort) return;
-    if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.connect) return;
+    if (!isExtensionContext || !chrome.runtime.connect) return;
 
     try {
-      keepAlivePort = chrome.runtime.connect({ name: 'renderex_keepalive' });
+      keepAlivePort = chrome.runtime.connect({ name: 'renderx_keepalive' });
       console.log('[RenderX] KeepAlive long-lived port connected');
 
       keepAlivePort.onDisconnect.addListener(() => {
         keepAlivePort = null;
-        if (state.isGenerating) {
-          setTimeout(startKeepAlive, 1000);
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
         }
+        setTimeout(startKeepAlive, 1000);
       });
 
       keepAlivePort.onMessage.addListener((msg) => {
@@ -138,12 +149,18 @@ document.addEventListener('DOMContentLoaded', () => {
       // 20s heartbeat ping to keep MV3 service worker active
       heartbeatTimer = setInterval(() => {
         if (keepAlivePort) {
-          keepAlivePort.postMessage({ type: 'HEARTBEAT', timestamp: Date.now() });
+          try {
+            keepAlivePort.postMessage({ type: 'HEARTBEAT', timestamp: Date.now() });
+          } catch (e) {}
         }
       }, 20000);
     } catch (e) {
       console.warn('[RenderX] KeepAlive connection note:', e);
     }
+  }
+
+  if (isExtensionContext) {
+    startKeepAlive();
   }
 
   function stopKeepAlive() {
@@ -368,20 +385,30 @@ document.addEventListener('DOMContentLoaded', () => {
       .map(l => l.trim())
       .filter(l => l.length > 0)
       .map((line, idx) => {
-        let timestamp = `00.${String(idx * 4).padStart(2, '0')} - 00.${String((idx + 1) * 4).padStart(2, '0')}`;
+        let timestamp = `00.${String(idx * 4).padStart(2, '0')}-00.${String((idx + 1) * 4).padStart(2, '0')}`;
         let cleanPrompt = line;
 
-        // Extract timestamp if present: e.g. "00.00-04.35 | Scene 1: ..."
-        const match = line.match(/^([0-9.:\-\s]+)\s*\|\s*(.+)$/);
-        if (match) {
-          timestamp = match[1].trim();
-          cleanPrompt = match[2].trim();
+        // Extract [00.00 - 04.35] | Scene X: ... OR [00.00 - 04.35] Scene X: ... OR 00.00-04.35 | ...
+        const bracketPipeMatch = line.match(/^\[([0-9.:\-\s]+)\]\s*\|\s*(.+)$/);
+        const bracketMatch = line.match(/^\[([0-9.:\-\s]+)\]\s*(.+)$/);
+        const pipeMatch = line.match(/^([0-9.:\-\s]+)\s*\|\s*(.+)$/);
+
+        if (bracketPipeMatch) {
+          timestamp = bracketPipeMatch[1].trim();
+          cleanPrompt = bracketPipeMatch[2].trim();
+        } else if (bracketMatch) {
+          timestamp = bracketMatch[1].trim();
+          cleanPrompt = bracketMatch[2].trim();
+        } else if (pipeMatch) {
+          timestamp = pipeMatch[1].trim();
+          cleanPrompt = pipeMatch[2].trim();
         }
 
+        const compactTs = timestamp.replace(/\s+/g, '');
         return {
           index: idx + 1,
           timestamp: timestamp,
-          cleanTimestamp: timestamp.replace(/[^a-zA-Z0-9.-]/g, '_'),
+          cleanTimestamp: compactTs.replace(/[^a-zA-Z0-9.-]/g, '_'),
           rawPrompt: cleanPrompt
         };
       });
@@ -600,24 +627,25 @@ document.addEventListener('DOMContentLoaded', () => {
       card.className = 'image-card';
       card.id = `card-${item.index}`;
 
-      const filename = `0${item.index}_${item.cleanTimestamp}.${ext}`;
+      const paddedIdx = String(item.index).padStart(2, '0');
+      const filename = `${paddedIdx}_${item.cleanTimestamp}.${ext}`;
       item.filename = filename;
 
       card.innerHTML = `
         <div class="card-header-bar">
           <span class="timestamp-badge">🛡️ ${item.timestamp}</span>
-          <span class="badge-standby" id="badge-${item.index}">Queued</span>
+          <span class="badge-generating" id="badge-${item.index}">Generating...</span>
         </div>
         <div class="card-preview ${aspectClass}" id="previewBox-${item.index}">
           <div class="card-spinner" id="spinner-${item.index}">
             <div class="spin-circle"></div>
-            <span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${item.index}">Waiting in queue...</span>
+            <span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${item.index}">Generating...</span>
           </div>
         </div>
         <div class="card-meta">
           <div class="card-fn-row">
             <span class="card-filename">📁 ${filename}</span>
-            <span class="card-idx">#0${item.index}</span>
+            <span class="card-idx">#${paddedIdx}</span>
           </div>
           <p class="card-prompt-text" title="${item.rawPrompt}">${item.rawPrompt}</p>
           <div class="card-actions-single-row">
@@ -704,6 +732,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ================= 9. Batch Queue Execution =================
   window.triggerGenerateBatch = async function () {
+    if (!isExtensionContext) {
+      showToast('Please open RenderX via the Chrome Extension icon, not localhost.', 4000);
+      return;
+    }
+
     if (state.isGenerating) {
       showToast('Generation already in progress');
       return;
@@ -736,7 +769,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ...p,
         fullPrompt: finalPrompt,
         dataUrl: null,
-        status: 'pending',
+        status: 'generating',
         mediaType: (state.engine === 'google-flow' && state.subMode.includes('video')) ? 'video' : 'image',
         referenceImage: state.flowReferenceImage || state.charImageBase64
       };
@@ -747,23 +780,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (stopBatchBtn) stopBatchBtn.disabled = false;
     if (progressBarWrap) progressBarWrap.style.display = 'block';
     if (progressBarFill) progressBarFill.style.width = '0%';
+    if (galleryReadyPill) galleryReadyPill.textContent = `0 / ${state.items.length} READY (GENERATING...)`;
 
+    // Immediately render all N spinning cards simultaneously
     renderLiveGrid(state.items);
     startKeepAlive();
-    showToast(`Starting ${state.items.length} shots via ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'}...`, 2500);
+    showToast(`Dispatching ${state.items.length} shots across 6 parallel workers via ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'}...`, 2800);
 
     // Send queue to background service worker
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({
-        type: 'START_BATCH_QUEUE',
-        items: state.items,
-        engine: state.engine,
-        subMode: state.subMode
-      });
-    } else {
-      // Local fallback simulation when previewing standalone without Chrome extension context
-      runLocalSimulation();
-    }
+    chrome.runtime.sendMessage({
+      type: 'START_BATCH_QUEUE',
+      items: state.items,
+      engine: state.engine,
+      subMode: state.subMode
+    });
   };
 
   if (generateBatchBtn) {
@@ -772,11 +802,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (stopBatchBtn) {
     stopBatchBtn.addEventListener('click', () => {
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      if (isExtensionContext && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({ type: 'STOP_BATCH_QUEUE' });
       }
       state.isGenerating = false;
-      stopKeepAlive();
       if (generateBatchBtn) generateBatchBtn.disabled = false;
       if (stopBatchBtn) stopBatchBtn.disabled = true;
       showToast('Generation halted');
@@ -788,20 +817,29 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!msg) return;
 
     if (msg.type === 'ITEM_STATUS_UPDATE' || msg.type === 'ITEM_STATUS') {
-      updateCardStatus(msg.index, msg.status);
+      const item = state.items.find(i => i.index === msg.index);
+      if (item && item.status !== 'done') {
+        updateCardStatus(msg.index, msg.status);
+      }
     } else if (msg.type === 'ITEM_STARTED') {
-      updateCardStatus(msg.index, 'Generating...');
+      const item = state.items.find(i => i.index === msg.index);
+      if (item && item.status !== 'done') {
+        updateCardStatus(msg.index, 'Generating...');
+      }
     } else if (msg.type === 'ITEM_COMPLETED') {
       const item = state.items.find(i => i.index === msg.index);
       if (item) {
+        if (item.status === 'done' && item.dataUrl) return;
         item.dataUrl = msg.dataUrl;
         item.status = 'done';
+        if (msg.mediaType) item.mediaType = msg.mediaType;
         updateCardCompleted(item);
       }
       updateOverallProgress();
     } else if (msg.type === 'ITEM_FAILED') {
       const item = state.items.find(i => i.index === msg.index);
       if (item) {
+        if (item.status === 'done') return;
         item.status = 'failed';
       }
       updateCardFailed(msg.index, msg.error || 'Automation timeout');
@@ -811,7 +849,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  if (isExtensionContext && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
       handleIncomingMessage(msg);
     });
@@ -824,70 +862,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const pct = Math.round((completed / total) * 100);
 
     if (progressBarFill) progressBarFill.style.width = `${pct}%`;
-    if (galleryReadyPill) galleryReadyPill.textContent = `${completed}/${total} READY (LIVE)`;
+    if (completed > 0) {
+      if (downloadZipBtn) downloadZipBtn.disabled = false;
+      if (downloadZipTopBtn) downloadZipTopBtn.disabled = false;
+    }
+    if (galleryReadyPill) {
+      galleryReadyPill.textContent = (state.isGenerating && completed < total)
+        ? `${completed} / ${total} READY (GENERATING...)`
+        : `${completed} / ${total} READY (LIVE)`;
+    }
   }
 
   function finishQueue() {
     state.isGenerating = false;
-    stopKeepAlive();
     if (generateBatchBtn) generateBatchBtn.disabled = false;
     if (stopBatchBtn) stopBatchBtn.disabled = true;
-    if (downloadZipBtn) downloadZipBtn.disabled = false;
-    if (downloadZipTopBtn) downloadZipTopBtn.disabled = false;
 
     const completed = state.items.filter(i => i.status === 'done').length;
-    showToast(`Batch completed: ${completed} shots ready`);
-  }
-
-  // ================= 10. Local Simulation (when tested standalone on localhost) =================
-  function runLocalSimulation() {
-    let currentIdx = 0;
-
-    function processNext() {
-      if (!state.isGenerating || currentIdx >= state.items.length) {
-        finishQueue();
-        return;
-      }
-
-      const item = state.items[currentIdx];
-      updateCardStatus(item.index, 'Rendering canvas...');
-
-      setTimeout(() => {
-        const canvas = document.createElement('canvas');
-        canvas.width = (state.aspectRatio === '16:9') ? 854 : ((state.aspectRatio === '9:16') ? 480 : 640);
-        canvas.height = (state.aspectRatio === '16:9') ? 480 : ((state.aspectRatio === '9:16') ? 854 : 640);
-        const ctx = canvas.getContext('2d');
-
-        const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-        grad.addColorStop(0, '#0F172A');
-        grad.addColorStop(0.5, '#1E1B4B');
-        grad.addColorStop(1, '#064E3B');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.fillStyle = '#38BDF8';
-        ctx.font = 'bold 24px Inter, sans-serif';
-        ctx.fillText(`Shot #0${item.index}: ${item.timestamp}`, 30, 60);
-
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '16px Inter, sans-serif';
-        ctx.fillText(item.rawPrompt.substring(0, 50) + '...', 30, 100);
-
-        ctx.fillStyle = '#10B981';
-        ctx.font = '14px JetBrains Mono, monospace';
-        ctx.fillText(`Engine: ${state.engine.toUpperCase()}`, 30, canvas.height - 40);
-
-        item.dataUrl = canvas.toDataURL('image/png');
-        item.status = 'done';
-        updateCardCompleted(item);
-        updateOverallProgress();
-
-        currentIdx++;
-        processNext();
-      }, 1500);
+    if (completed > 0) {
+      if (downloadZipBtn) downloadZipBtn.disabled = false;
+      if (downloadZipTopBtn) downloadZipTopBtn.disabled = false;
     }
-
-    processNext();
+    updateOverallProgress();
+    showToast(`Batch completed: ${completed} shots ready`);
   }
 
   // ================= 11. Individual Card Tool Actions =================
@@ -907,8 +904,23 @@ document.addEventListener('DOMContentLoaded', () => {
           showToast(`Shot #${index} not yet ready to save`);
         }
       } else if (action === 'retry') {
-        showToast(`Re-rolling Shot #${index}...`);
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage && item) {
+        if (!isExtensionContext) {
+          showToast('Please open RenderX via the Chrome Extension icon, not localhost.');
+          return;
+        }
+        if (item) {
+          showToast(`Re-rolling Shot #${index}...`);
+          item.status = 'generating';
+          item.dataUrl = null;
+          const previewBox = document.getElementById(`previewBox-${index}`);
+          if (previewBox) {
+            previewBox.innerHTML = `
+              <div class="card-spinner" id="spinner-${index}">
+                <div class="spin-circle"></div>
+                <span style="font-size:8.5px; color:var(--text-dim);" id="spinnerText-${index}">Retrying...</span>
+              </div>
+            `;
+          }
           updateCardStatus(index, 'Retrying...');
           startKeepAlive();
           chrome.runtime.sendMessage({
