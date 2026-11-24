@@ -1,7 +1,7 @@
 /**
  * RenderX Image Studio - Resilient Free Options Engine
- * Multi-endpoint fallback: Pollinations FLUX.1 + Turbo + Free Serverless
- * Prevents 402 Payment Required errors from stopping generation batches.
+ * Multi-endpoint fallback: Free Serverless Default + Turbo
+ * Strictly eliminates 402 Payment Required errors by removing paywalled FLUX queries.
  */
 
 class PollinationsEngine {
@@ -18,7 +18,7 @@ class PollinationsEngine {
   }
 
   /**
-   * Generate an image using free serverless models with multi-endpoint fallback
+   * Generate an image using 100% free serverless endpoints
    * @param {string} prompt 
    * @param {Object} options 
    * @returns {Promise<Blob>}
@@ -27,8 +27,8 @@ class PollinationsEngine {
     const { aspectRatio = 'landscape', negativePrompt = '', seed = null } = options;
     const { width, height } = PollinationsEngine.getDimensions(aspectRatio);
 
-    // Sanitize and clean prompt length to avoid URL 402/414 limits
-    let cleanPrompt = prompt.trim().slice(0, 450);
+    // Sanitize and clean prompt length to avoid URL limits
+    let cleanPrompt = prompt.trim().slice(0, 400);
     if (negativePrompt && negativePrompt.trim()) {
       cleanPrompt += `, avoid: ${negativePrompt.trim().slice(0, 100)}`;
     }
@@ -36,12 +36,12 @@ class PollinationsEngine {
     const randomSeed = seed !== null ? seed : Math.floor(Math.random() * 999999);
     const encodedPrompt = encodeURIComponent(cleanPrompt);
 
-    // List of resilient free endpoints and model variants
+    // Reliable 100% free candidate URLs (NO paywalled model=flux parameter)
     const candidateUrls = [
-      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=flux&seed=${randomSeed}&nologo=true`,
-      `https://gen.pollinations.ai/image/${encodedPrompt}?width=${width}&height=${height}&model=flux&seed=${randomSeed}&nologo=true`,
+      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&seed=${randomSeed}&nologo=true`,
       `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&model=turbo&seed=${randomSeed}&nologo=true`,
-      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true`
+      `https://gen.pollinations.ai/image/${encodedPrompt}?width=${width}&height=${height}&seed=${randomSeed}&nologo=true`,
+      `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true`
     ];
 
     let lastError = null;
@@ -75,7 +75,7 @@ class PollinationsEngine {
       }
     }
 
-    throw new Error(`Free Options Engine exhausted candidates: ${lastError?.message || 'Failed'}`);
+    throw new Error(`Free Options Engine exhausted: ${lastError?.message || 'Failed'}`);
   }
 }
 
