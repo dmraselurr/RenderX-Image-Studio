@@ -24,23 +24,23 @@
       </div>
 
       <div class="logo-text">
-        <h1>RenderX Image Studio <span class="badge-version">v1.0.8 PRO</span></h1>
-        <p>AI Video Timeline &amp; Consistency Generator</p>
+        <h1>RenderX Image Studio <span class="badge-version">v2.0 DESKTOP</span></h1>
+        <p>Multi-Profile Desktop Image Production Studio</p>
       </div>
     </div>
 
-    <!-- Center/Right Status & Window Dock Controls -->
+    <!-- Center/Right Status & Desktop Controls -->
     <div class="topbar-actions">
       <div class="engine-pill" id="sessionStatusPill">
         <span class="dot" id="sessionDot"></span>
-        <span id="sessionStatusText">Gemini Canvas (Free Google Session)</span>
+        <span id="sessionStatusText">Gemini Canvas (Desktop Cluster)</span>
       </div>
 
-      <button type="button" class="btn-dock-split" id="btnSidePanelInfo" title="RenderX runs attached inside the Chrome Side Panel">
-        <span>📌 Side Panel Docked</span>
+      <button type="button" class="btn-dock-split" id="btnSidePanelInfo" title="Open Generated Outputs Folder on Disk">
+        <span>📂 Open Outputs</span>
       </button>
 
-      <button type="button" class="btn-icon" id="sessionInfoBtn" title="Google Session &amp; Cluster Info">
+      <button type="button" class="btn-icon" id="sessionInfoBtn" title="Manage 8 Chrome Account Profiles">
         <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
         </svg>
@@ -53,11 +53,6 @@
       </button>
     </div>
   </header>
-
-  <!-- Localhost Alert Banner (Shown only when opened outside Chrome Extension Side Panel) -->
-  <div class="extension-context-banner" id="localhostAlertBanner" style="display: none;">
-    <span>⚠️ Please open RenderX via the Chrome Extension icon (Side Panel), not localhost.</span>
-  </div>
 
   <!-- Workspace: Left Sidebar + Right Studio Shots Gallery -->
   <div class="workspace">
@@ -88,16 +83,18 @@
               </button>
             </div>
 
-            <!-- Active Google Session Status Bar -->
+            <!-- Active Google Session Status Bar (8 Chrome Profiles Cluster) -->
             <div class="canvas-cluster-bar" id="clusterStatusBar">
               <div class="cluster-status-line">
-                <span class="cluster-status-label">ACTIVE GOOGLE CLUSTER:</span>
-                <span class="cluster-status-val connected" id="clusterStateText">🟢 Connected</span>
+                <span class="cluster-status-label">CHROME PROFILE CLUSTER:</span>
+                <span class="cluster-status-val connected" id="clusterStateText">🟢 Desktop Ready</span>
               </div>
               <div class="cluster-profile-pill" id="clusterProfilePill">
                 <span class="cluster-dot"></span>
-                <span id="clusterProfileName">Google Active Session (Zero API Key)</span>
+                <span id="clusterProfileName">1 / 8 Profiles Enabled</span>
+                <button type="button" class="btn-manage-profiles" id="btnManageProfiles">👥 Manage 8 Profiles</button>
               </div>
+              <div class="cluster-profiles-strip" id="clusterProfilesStrip"></div>
             </div>
 
             <!-- Google Flow Sub-Modes (Visible when Google Flow is selected) -->
@@ -289,11 +286,6 @@
         </div>
       </header>
 
-  <!-- Localhost Alert Banner (Shown only when opened outside Chrome Extension Side Panel) -->
-  <div class="extension-context-banner" id="localhostAlertBanner" style="display: none;">
-    <span>⚠️ Please open RenderX via the Chrome Extension icon (Side Panel), not localhost.</span>
-  </div>
-
       <!-- 4-Column Gallery Grid (Always 4 Columns in 1 Row) -->
       <div class="gallery-container" id="galleryContainer">
         <div class="gallery-grid" id="thumbnailGrid">
@@ -449,26 +441,19 @@
     </div>
   </div>
 
-  <!-- Session & Cluster Info Modal -->
+  <!-- 8-Chrome-Profile Multi-Account Cluster Modal -->
   <div class="modal-overlay" id="sessionInfoModal">
-    <div class="modal-card modal-card-sm">
+    <div class="modal-card modal-card-profiles">
       <div class="modal-card-header">
-        <h3>Google Account Session Status</h3>
-        <button type="button" class="btn-modal-close" id="closeSessionModalBtn">✕</button>
-      </div>
-      <div class="modal-card-body" style="padding: 16px; color: var(--text-muted); font-size: 11px; line-height: 1.5;">
-        <p style="margin-bottom: 10px;">RenderX Image Studio operates <strong style="color:#10B981;">100% at the Google Account level</strong> using your browser's active session without requiring any paid API keys or AI Studio tokens.</p>
-        <div style="background:#05070B; padding:10px; border-radius:6px; border:1px solid #1E293B; margin-bottom:12px;">
-          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
-            <span>Gemini Canvas Session:</span>
-            <strong style="color:#38BDF8;" id="infoGeminiState">Connected</strong>
-          </div>
-          <div style="display:flex; justify-content:space-between;">
-            <span>Google Flow Session:</span>
-            <strong style="color:#10B981;" id="infoFlowState">Active</strong>
-          </div>
+        <h3>Chrome Multi-Profile Cluster (8 Accounts)</h3>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" class="btn-subtle" id="btnAddProfileSlot">+ Add Profile</button>
+          <button type="button" class="btn-modal-close" id="closeSessionModalBtn">✕</button>
         </div>
-        <p style="font-size: 10px; color: var(--text-dim);">To generate media, simply log in to your Google Account at <code style="color:#38BDF8;">gemini.google.com</code> or <code style="color:#38BDF8;">flow.google.com</code>. The extension will automatically coordinate generation.</p>
+      </div>
+      <div class="modal-card-body" style="padding: 14px; color: var(--text-muted); font-size: 11px; line-height: 1.45;">
+        <p style="margin-bottom: 10px;">Login up to <strong style="color:#38BDF8;">8 isolated Chrome Profiles</strong> once. Enabled profiles run <strong style="color:#10B981;">Gemini Canvas &amp; Google Flow</strong> concurrently in the background and auto-save outputs to disk.</p>
+        <div class="profiles-list-container" id="profilesListContainer"></div>
       </div>
     </div>
   </div>
