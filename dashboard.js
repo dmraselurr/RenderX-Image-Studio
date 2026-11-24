@@ -244,25 +244,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Side Panel Info Button
+  // Dock Info Button
   if (btnSidePanelInfo) {
     btnSidePanelInfo.addEventListener('click', () => {
-      showToast('RenderX is docked directly in Chrome Side Panel');
+      showToast('RenderX runs in 70vw In-Browser Dock (Zero Extra Tabs)');
     });
+  }
+
+  function applySyncStatusUI(geminiConnected, flowConnected) {
+    if (sessionDot) {
+      sessionDot.className = (geminiConnected || flowConnected) ? 'dot' : 'dot amber';
+    }
+    if (clusterStateText) {
+      clusterStateText.textContent = (geminiConnected || flowConnected) ? '🟢 RPC Synced (Zero-Tab)' : '🟡 Standby (Needs Sync)';
+    }
+    if (infoGeminiState) infoGeminiState.textContent = geminiConnected ? 'Synced (q4uTj Direct RPC)' : 'Open Canvas Share Once to Sync';
+    if (infoFlowState) infoFlowState.textContent = flowConnected ? 'Synced (Bearer Token Ready)' : 'Open Flow Once to Sync';
   }
 
   // Session & Status Check
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
     chrome.runtime.sendMessage({ type: 'CHECK_STATUS' }, (res) => {
       if (res && res.success) {
-        if (sessionDot) {
-          sessionDot.className = (res.geminiConnected || res.flowConnected) ? 'dot' : 'dot amber';
-        }
-        if (clusterStateText) {
-          clusterStateText.textContent = (res.geminiConnected || res.flowConnected) ? '🟢 Connected' : '🟡 Standby';
-        }
-        if (infoGeminiState) infoGeminiState.textContent = res.geminiConnected ? 'Connected (Active Tab)' : 'Ready (Auto-Launch)';
-        if (infoFlowState) infoFlowState.textContent = res.flowConnected ? 'Connected (Active Tab)' : 'Ready (Auto-Launch)';
+        applySyncStatusUI(res.geminiConnected, res.flowConnected);
       }
     });
 
@@ -768,6 +772,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return {
         ...p,
         fullPrompt: finalPrompt,
+        aspectRatio: state.aspectRatio,
         dataUrl: null,
         status: 'generating',
         mediaType: (state.engine === 'google-flow' && state.subMode.includes('video')) ? 'video' : 'image',
@@ -785,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Immediately render all N spinning cards simultaneously
     renderLiveGrid(state.items);
     startKeepAlive();
-    showToast(`Dispatching ${state.items.length} shots across 6 parallel workers via ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'}...`, 2800);
+    showToast(`Dispatching ${state.items.length} shots via Zero-Tab Direct ${state.engine === 'google-flow' ? 'Google Flow' : 'Gemini Canvas'} Engine...`, 2800);
 
     // Send queue to background service worker
     chrome.runtime.sendMessage({
@@ -844,6 +849,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       updateCardFailed(msg.index, msg.error || 'Automation timeout');
       updateOverallProgress();
+    } else if (msg.type === 'SYNC_STATUS_UPDATED') {
+      applySyncStatusUI(msg.geminiSynced, msg.flowSynced);
+      showToast('Session RPC protocol synced (Zero-Tab Ready!)');
     } else if (msg.type === 'QUEUE_FINISHED') {
       finishQueue();
     }
