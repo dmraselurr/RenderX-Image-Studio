@@ -1,13 +1,14 @@
 /**
  * RenderX Image Studio - Gemini Canvas Isolated Content Relay
- * Bridges MAIN world page interceptor/iframe runner with background.js.
+ * Bridges background.js <-> MAIN world canvas_page_bridge.js across top frame and sandboxed iframes.
  */
 
 (function () {
   if (window.__renderexCanvasLoaded) return;
   window.__renderexCanvasLoaded = true;
 
-  const isCanvasIframe = location.hostname.endsWith('.scf.usercontent.goog');
+  const isTopFrame = (window.top === window);
+  const isCanvasIframe = !isTopFrame && (location.hostname.endsWith('.scf.usercontent.goog') || location.hostname.endsWith('.googleusercontent.com'));
   const pendingRequests = new Map();
 
   window.addEventListener('message', (event) => {
@@ -22,16 +23,39 @@
       }).catch(() => {});
     }
 
-    if (data.type === 'CAPTURED_Q4UTJ_FETCH') {
+    if (data.type === 'CAPTURED_Q4UTJ_RAW') {
       chrome.runtime.sendMessage({
-        type: 'CAPTURED_Q4UTJ_FETCH',
+        type: 'CAPTURED_Q4UTJ_RAW',
         url: data.url,
+        headers: data.headers,
         body: data.body,
         promptHint: data.promptHint
       }).catch(() => {});
     }
 
-    if ((data.type === 'WIZ_TOKENS_RESULT' || data.type === 'IFRAME_TURN_RESULT') && data.requestId) {
+    if (data.type === 'MAIN_BATCH_SHOT_RESULT') {
+      chrome.runtime.sendMessage({
+        type: 'MAIN_BATCH_SHOT_RESULT',
+        engine: 'gemini-canvas',
+        batchId: data.batchId,
+        index: data.index,
+        ok: data.ok,
+        httpStatus: data.httpStatus,
+        dataUrl: data.dataUrl,
+        imageUrl: data.imageUrl,
+        error: data.error
+      }).catch(() => {});
+    }
+
+    if (data.type === 'MAIN_BATCH_DONE') {
+      chrome.runtime.sendMessage({
+        type: 'MAIN_BATCH_DONE',
+        engine: 'gemini-canvas',
+        batchId: data.batchId
+      }).catch(() => {});
+    }
+
+    if (data.type === 'IFRAME_TURN_RESULT' && data.requestId) {
       const resolver = pendingRequests.get(data.requestId);
       if (resolver) {
         pendingRequests.delete(data.requestId);
@@ -60,20 +84,23 @@
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (!request) return false;
 
-    if (request.type === 'PING') {
-      if (isCanvasIframe) {
-        sendResponse({ status: 'READY', isIframe: true, url: window.location.href });
-        return true;
-      }
-      return false;
-    }
-
-    if (request.type === 'READ_WIZ_TOKENS' && !isCanvasIframe) {
-      queryMainBridge({ type: 'READ_WIZ_TOKENS' }, 2500).then(sendResponse);
+    if (request.type === 'PING' && isTopFrame) {
+      sendResponse({ status: 'READY', frame: 'top', url: window.location.href });
       return true;
     }
 
-    // Only respond from the *.scf.usercontent.goog Canvas iframe so main frame never steals sendResponse!
+    if (request.type === 'EXECUTE_Q4UTJ_MAIN_BATCH' && isTopFrame) {
+      window.postMessage({
+        source: 'RENDERX_CANVAS_CS',
+        type: 'EXECUTE_Q4UTJ_MAIN_BATCH',
+        items: request.items,
+        template: request.template,
+        batchId: request.batchId
+      }, '*');
+      sendResponse({ ok: true, dispatched: true });
+      return true;
+    }
+
     if (request.type === 'RUN_CANVAS_IFRAME_TURN' && isCanvasIframe) {
       queryMainBridge({
         type: 'RUN_CANVAS_IFRAME_TURN',
