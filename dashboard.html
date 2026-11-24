@@ -445,8 +445,11 @@
   <div class="modal-overlay" id="sessionInfoModal">
     <div class="modal-card modal-card-profiles">
       <div class="modal-card-header">
-        <h3>Chrome Multi-Profile Cluster (8 Accounts)</h3>
-        <div style="display:flex; align-items:center; gap:8px;">
+        <h3>Chrome Multi-Profile Cluster (8+ Accounts)</h3>
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <button type="button" class="btn-subtle" id="btnImportProProfiles" style="display:none; border-color:rgba(16,185,129,0.45); color:#34D399;" title="Copy signed-in Google profiles from RenderX Studio Pro">📥 Import Pro</button>
+          <button type="button" class="btn-subtle" id="btnOpenAllUnlogged" style="border-color:rgba(56,189,248,0.4); color:#38BDF8;" title="Open real Chrome windows for all unlogged profiles">🔑 Open All Unlogged</button>
+          <button type="button" class="btn-subtle" id="btnRefreshProfiles" title="Re-scan profile login cookies & emails">🔄 Refresh</button>
           <button type="button" class="btn-subtle" id="btnAddProfileSlot">+ Add Profile</button>
           <button type="button" class="btn-modal-close" id="closeSessionModalBtn">✕</button>
         </div>
