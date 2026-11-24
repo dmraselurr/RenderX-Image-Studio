@@ -1,23 +1,21 @@
 /**
- * RenderX Image Studio - Main Application Controller
- * Version 1.0.0
+ * RenderX Image Studio - v1.0.1 Application Controller
+ * Compact 75-80% Scale Density & 5-Column Grid Implementation
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Application State
   const state = {
-    items: [], // Array of prompt objects: { index, timestamp, cleanTimestamp, prompt, blob, objectUrl, filename, status }
+    items: [],
     isGenerating: false,
     shouldAbort: false,
     selectedEngine: 'gemini-canvas',
     autoFallback: true,
-    aspectRatio: 'square',
-    concurrency: 4,
+    aspectRatio: 'landscape',
+    concurrency: 3,
     googleApiKey: '',
-    hfToken: '',
     charImageBase64: null,
-    styleImageBase64: null,
-    selectedCards: new Set()
+    styleImageBase64: null
   };
 
   // DOM Elements - Navigation & Actions
@@ -30,11 +28,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // DOM Elements - Settings Modal
   const settingGoogleKey = document.getElementById('settingGoogleKey');
-  const settingHfKey = document.getElementById('settingHfKey');
   const settingConcurrency = document.getElementById('settingConcurrency');
   const saveSettingsBtn = document.getElementById('saveSettingsBtn');
 
-  // DOM Elements - Controls Panel
+  // DOM Elements - Left Sidebar Controls
   const engineSelect = document.getElementById('engineSelect');
   const autoFallbackToggle = document.getElementById('autoFallbackToggle');
   const aspectRatioSelect = document.getElementById('aspectRatioSelect');
@@ -85,7 +82,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saveAndRegenBtn = document.getElementById('saveAndRegenBtn');
   let currentEditItem = null;
 
-  // Toast Notification Element
+  // Toast Notification
   const toast = document.getElementById('toast');
   const toastMsg = document.getElementById('toastMsg');
 
@@ -94,7 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     toast.className = `toast show ${type}`;
     setTimeout(() => {
       toast.className = 'toast';
-    }, 3500);
+    }, 3200);
   }
 
   // ================= 1. Load Settings from Storage =================
@@ -103,10 +100,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (saved.googleApiKey) {
       state.googleApiKey = saved.googleApiKey;
       settingGoogleKey.value = saved.googleApiKey;
-    }
-    if (saved.hfToken) {
-      state.hfToken = saved.hfToken;
-      settingHfKey.value = saved.hfToken;
     }
     if (saved.engine) {
       state.selectedEngine = saved.engine;
@@ -133,34 +126,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         activeEngineLabel.textContent = 'Google AI Studio (Imagen 3)';
         break;
       case 'pollinations-flux':
-        activeEngineLabel.textContent = 'Pollinations FLUX.1 (Free Unlimited)';
+        activeEngineLabel.textContent = 'Free Options (FLUX.1 / Serverless)';
         break;
       case 'gemini-canvas':
       default:
-        activeEngineLabel.textContent = 'Gemini Canvas (Google Session)';
+        activeEngineLabel.textContent = 'Gemini Canvas (Free Google Session)';
         break;
     }
   }
 
   await loadSettings();
 
-  // ================= 2. Settings Modal Events =================
-  openSettingsBtn.addEventListener('click', () => {
-    settingsModal.style.display = 'flex';
-  });
-
-  closeSettingsBtn.addEventListener('click', () => {
-    settingsModal.style.display = 'none';
-  });
+  // Settings Modal Events
+  openSettingsBtn.addEventListener('click', () => { settingsModal.style.display = 'flex'; });
+  closeSettingsBtn.addEventListener('click', () => { settingsModal.style.display = 'none'; });
 
   saveSettingsBtn.addEventListener('click', async () => {
     state.googleApiKey = settingGoogleKey.value.trim();
-    state.hfToken = settingHfKey.value.trim();
     state.concurrency = parseInt(settingConcurrency.value, 10);
 
     await window.StorageManager.save({
       googleApiKey: state.googleApiKey,
-      hfToken: state.hfToken,
       concurrency: state.concurrency
     });
 
@@ -187,7 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // ================= 3. Character & Style Reference Uploads =================
+  // ================= 2. Character & Style Reference Uploads =================
   function setupImageUpload(fileInput, thumbImg, thumbPlaceholder, removeBtn, stateKey) {
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
@@ -215,23 +201,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  setupImageUpload(
-    charFileInput,
-    charThumbImg,
-    charThumb.querySelector('.placeholder-icon'),
-    charRemoveBtn,
-    'charImageBase64'
-  );
+  setupImageUpload(charFileInput, charThumbImg, charThumb.querySelector('.placeholder-icon'), charRemoveBtn, 'charImageBase64');
+  setupImageUpload(styleFileInput, styleThumbImg, styleThumb.querySelector('.placeholder-icon'), styleRemoveBtn, 'styleImageBase64');
 
-  setupImageUpload(
-    styleFileInput,
-    styleThumbImg,
-    styleThumb.querySelector('.placeholder-icon'),
-    styleRemoveBtn,
-    'styleImageBase64'
-  );
-
-  // ================= 4. Negative Prompt Chips =================
+  // ================= 3. Negative Prompt Chips =================
   negativeChips.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip-tag');
     if (!chip) return;
@@ -245,14 +218,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     return activeChips.join(', ');
   }
 
-  // ================= 5. Timeline Prompt Textarea & Parsing =================
+  // ================= 4. Timeline Prompt Parsing =================
   function updatePromptCount() {
     const parsed = window.TimelineParser.parse(bulkPrompts.value);
-    promptCount.textContent = `${parsed.length} Prompts`;
+    promptCount.textContent = `${parsed.length}`;
     if (parsed.length > 0) {
       generateBtnText.textContent = `Generate ${parsed.length} Images`;
     } else {
-      generateBtnText.textContent = 'Generate All Images';
+      generateBtnText.textContent = 'Generate Images';
     }
   }
 
@@ -267,27 +240,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     const formatted = window.TimelineParser.autoFormat(text);
     bulkPrompts.value = formatted;
     updatePromptCount();
-    showToast('Timeline prompts formatted with clean 1-line gaps', 'success');
+    showToast('Timeline prompts synchronized', 'success');
   });
 
   loadSamplePromptsBtn.addEventListener('click', () => {
-    const sample = `0.0-0.5 | A majestic cyberpunk samurai standing atop a neon-lit Tokyo skyscraper in heavy rain
-0.5-2.7 | Close-up shot of the samurai's eyes glowing violet beneath a high-tech reflective visor
-2.7-5.0 | The samurai draws a glowing plasma katana blade, electric sparks flying into the dark air
-5.0-8.2 | A futuristic hover-drone glides past in the neon mist, searchlights scanning the rooftops
-8.2-11.5 | Wide cinematic shot of the samurai leaping between futuristic skyscrapers into the rain`;
+    const sample = `00.00-02.50 | Scene 1: Medium Action Shot, subject in dynamic motion, 35mm shallow depth of field
+02.50-08.59 | Scene 2: Cinematic Close-Up detail shot, high emotional tension, soft volumetric lighting
+08.59-16.42 | Scene 3: Extreme Wide Establishing Angle, sweeping cinematic horizon, atmospheric rim lighting
+16.42-22.94 | Scene 4: Over-The-Shoulder narrative framing, award-winning cinematography, soft bokeh
+22.94-28.59 | Scene 5: Slow Cinematic Pan perspective, golden hour volumetric atmosphere`;
 
     bulkPrompts.value = sample;
     updatePromptCount();
-    showToast('Sample 5-scene timeline script loaded', 'success');
+    showToast('Loaded 5 sample timeline scenes', 'success');
   });
 
-  // ================= 6. Gallery Management & Dummy Cards =================
-  const dummyCardsHTML = `
+  // ================= 5. Default 5-Dummy State + Down Arrow =================
+  const dummyGridHTML = `
     <div class="dummy-card">
       <div class="dummy-preview">
-        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
-        <span style="font-size: 11px;">01. 0.0-0.5s Slot</span>
+        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">00.00 - 04.35</span>
+        <span style="font-size: 10px; color: #64748B;">Shot #1 Standby</span>
       </div>
       <div class="dummy-meta">
         <div class="dummy-line" style="width: 80%;"></div>
@@ -296,8 +269,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
-        <span style="font-size: 11px;">02. 0.5-2.7s Slot</span>
+        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">04.35 - 07.83</span>
+        <span style="font-size: 10px; color: #64748B;">Shot #2 Standby</span>
       </div>
       <div class="dummy-meta">
         <div class="dummy-line" style="width: 70%;"></div>
@@ -306,18 +279,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
-        <span style="font-size: 11px;">03. 2.7-5.0s Slot</span>
+        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">07.83 - 11.74</span>
+        <span style="font-size: 10px; color: #64748B;">Shot #3 Standby</span>
       </div>
       <div class="dummy-meta">
-        <div class="dummy-line" style="width: 90%;"></div>
-        <div class="dummy-line" style="width: 60%;"></div>
+        <div class="dummy-line" style="width: 85%;"></div>
+        <div class="dummy-line" style="width: 55%;"></div>
       </div>
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
-        <span style="font-size: 11px;">04. 5.0-8.2s Slot</span>
+        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">11.74 - 16.52</span>
+        <span style="font-size: 10px; color: #64748B;">Shot #4 Standby</span>
       </div>
       <div class="dummy-meta">
         <div class="dummy-line" style="width: 75%;"></div>
@@ -326,25 +299,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     </div>
     <div class="dummy-card">
       <div class="dummy-preview">
-        <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"></path></svg>
-        <span style="font-size: 11px;">05. 8.2-11.5s Slot</span>
+        <span style="font-size: 11px; font-weight: 700; color: #38BDF8;">16.52 - 19.13</span>
+        <span style="font-size: 10px; color: #64748B;">Shot #5 Standby</span>
       </div>
       <div class="dummy-meta">
-        <div class="dummy-line" style="width: 85%;"></div>
-        <div class="dummy-line" style="width: 55%;"></div>
+        <div class="dummy-line" style="width: 90%;"></div>
+        <div class="dummy-line" style="width: 60%;"></div>
       </div>
+    </div>
+    <div class="dummy-continuation-row">
+      <div class="dummy-arrow-circle">↓</div>
+      <span class="dummy-continuation-text">Standby: Images will populate dynamically upon generation</span>
     </div>
   `;
 
   function resetGalleryToDummy() {
-    // Revoke old object URLs to release memory
     state.items.forEach(it => {
       if (it.objectUrl) URL.revokeObjectURL(it.objectUrl);
     });
-
     state.items = [];
-    state.selectedCards.clear();
-    galleryGrid.innerHTML = dummyCardsHTML;
+    galleryGrid.innerHTML = dummyGridHTML;
     statTotal.textContent = '0';
     statGenerated.textContent = '0';
     statRemaining.textContent = '0';
@@ -353,13 +327,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     downloadZipBtn.disabled = true;
   }
 
-  // Clear Gallery Button
   clearGalleryBtn.addEventListener('click', () => {
     resetGalleryToDummy();
     showToast('Gallery cleared', 'info');
   });
 
-  // Global Reset Button (Clears prompts + gallery, leaves no residual data)
   globalResetBtn.addEventListener('click', () => {
     if (confirm('Reset RenderX Studio? This will clear all prompts and generated gallery.')) {
       bulkPrompts.value = '';
@@ -369,10 +341,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ================= 7. Card Rendering & Updates =================
+  // ================= 6. Card Rendering (5-Column Layout) =================
   function renderPlaceholderCards(items) {
     galleryGrid.innerHTML = '';
-    items.forEach((item, index) => {
+    items.forEach((item) => {
       const card = document.createElement('div');
       card.className = 'image-card';
       card.id = `card-${item.index}`;
@@ -389,10 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         <div class="card-meta">
           <p class="card-prompt-text" title="${item.prompt}">${item.prompt}</p>
           <div class="card-actions">
-            <div class="card-actions-left">
-              <button class="btn-card-action" data-action="preview" data-index="${item.index}" style="display:none;">View</button>
-              <button class="btn-card-action" data-action="edit" data-index="${item.index}">Edit</button>
-            </div>
+            <button class="btn-card-action" data-action="edit" data-index="${item.index}">Edit</button>
             <button class="btn-card-action btn-regen" data-action="regen" data-index="${item.index}">Regen</button>
           </div>
         </div>
@@ -414,36 +383,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     const cardEl = document.getElementById(`card-${item.index}`);
     if (!previewEl || !cardEl) return;
 
+    // Clear loading spinner
+    const loadingEl = document.getElementById(`loading-${item.index}`);
+    if (loadingEl) loadingEl.remove();
+
     // Create image element
     const img = document.createElement('img');
     img.src = item.objectUrl;
     img.alt = item.prompt;
     img.onclick = () => openLightbox(item);
-
-    // Clear loading spinner
-    const loadingEl = document.getElementById(`loading-${item.index}`);
-    if (loadingEl) loadingEl.remove();
-
     previewEl.appendChild(img);
 
-    // Show View button
-    const viewBtn = cardEl.querySelector('[data-action="preview"]');
-    if (viewBtn) viewBtn.style.display = 'inline-flex';
+    // Zoom badge overlay
+    const zoomBtn = document.createElement('div');
+    zoomBtn.className = 'zoom-overlay-btn';
+    zoomBtn.innerHTML = '🔍 Zoom';
+    zoomBtn.onclick = () => openLightbox(item);
+    previewEl.appendChild(zoomBtn);
   }
 
   function updateCardError(index, errorMsg) {
     const loadingEl = document.getElementById(`loading-${index}`);
     if (loadingEl) {
       loadingEl.innerHTML = `
-        <span style="color: #f87171; font-weight: 600;">Failed</span>
-        <span style="font-size: 10px; color: var(--text-dim); text-align: center; padding: 0 8px;">${errorMsg}</span>
+        <span style="color: #F87171; font-weight: 700;">Failed</span>
+        <span style="font-size: 9px; color: var(--text-dim); text-align: center; padding: 0 4px; line-height: 1.2;">${errorMsg}</span>
       `;
     }
   }
 
-  // ================= 8. Concurrency Queue & Batch Execution =================
+  // ================= 7. Concurrency Queue & Batch Execution =================
   async function generateSingleItem(item) {
-    updateCardLoading(item.index, 'Generating...');
+    updateCardLoading(item.index, 'Connecting to Canvas...');
 
     try {
       const options = {
@@ -458,6 +429,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         styleDesc: styleDesc.value,
         styleImage: state.styleImageBase64,
         apiKey: state.googleApiKey,
+        onStatusUpdate: (statusText) => {
+          updateCardLoading(item.index, statusText);
+        },
         onEngineFallback: (newEngine, reason) => {
           updateActiveEngineLabel(`Active: ${newEngine}`);
           showToast(`Fallback to ${newEngine}: ${reason}`, 'info');
@@ -495,7 +469,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     statTotal.textContent = state.items.length;
     statRemaining.textContent = total;
 
-    // Worker pool concurrency
     let currentIndex = 0;
 
     async function worker() {
@@ -504,7 +477,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         await generateSingleItem(item);
         completedCount++;
 
-        // Update stats
         statGenerated.textContent = state.items.filter(it => it.status === 'done').length;
         statRemaining.textContent = Math.max(0, total - completedCount);
         const percent = Math.round((completedCount / total) * 100);
@@ -524,30 +496,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     const successCount = state.items.filter(it => it.status === 'done').length;
     if (successCount > 0) {
       downloadZipBtn.disabled = false;
-      showToast(`Batch completed: ${successCount} images generated!`, 'success');
+      showToast(`Batch completed: ${successCount} scenes ready!`, 'success');
     } else {
-      showToast('Batch finished with issues. Check errors or API keys.', 'error');
+      showToast('Batch encountered issues. Check errors or API key.', 'error');
     }
   }
 
-  // ================= 9. "Generate All" Click Handler =================
+  // Generate All Handler
   generateAllBtn.addEventListener('click', async () => {
     if (state.isGenerating) return;
 
     const rawText = bulkPrompts.value.trim();
     if (!rawText) {
-      showToast('Please paste timeline prompts in the input box', 'error');
+      showToast('Please enter timeline prompts in the input box', 'error');
       return;
     }
 
-    // Parse prompts
     const parsed = window.TimelineParser.parse(rawText);
     if (parsed.length === 0) {
-      showToast('No valid prompts detected. Use format: 0.0-0.5 | Prompt', 'error');
+      showToast('No valid prompts detected. Use format: 00.00-02.50 | Prompt', 'error');
       return;
     }
 
-    // Initialize state
     state.items = parsed.map(p => ({
       ...p,
       blob: null,
@@ -556,14 +526,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       status: 'pending'
     }));
 
-    // Render placeholder cards immediately
     renderPlaceholderCards(state.items);
-
-    // Run batch
     await runBatchQueue(state.items);
   });
 
-  // ================= 10. Card Actions: View, Edit & Single Regenerate =================
+  // Card Action Handlers
   galleryGrid.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
@@ -573,13 +540,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const item = state.items.find(it => it.index === index);
     if (!item) return;
 
-    if (action === 'preview') {
-      openLightbox(item);
-    } else if (action === 'edit') {
+    if (action === 'edit') {
       openEditModal(item);
     } else if (action === 'regen') {
       if (state.isGenerating) {
-        showToast('Batch in progress, please wait...', 'info');
+        showToast('Batch currently generating...', 'info');
         return;
       }
       showToast(`Regenerating Scene #${item.index}...`);
@@ -597,9 +562,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     lightboxModal.style.display = 'flex';
   }
 
-  closeLightboxBtn.addEventListener('click', () => {
-    lightboxModal.style.display = 'none';
-  });
+  closeLightboxBtn.addEventListener('click', () => { lightboxModal.style.display = 'none'; });
 
   lightboxDownloadBtn.addEventListener('click', () => {
     if (!currentLightboxItem || !currentLightboxItem.blob) return;
@@ -619,9 +582,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     editPromptModal.style.display = 'flex';
   }
 
-  closeEditPromptBtn.addEventListener('click', () => {
-    editPromptModal.style.display = 'none';
-  });
+  closeEditPromptBtn.addEventListener('click', () => { editPromptModal.style.display = 'none'; });
 
   saveAndRegenBtn.addEventListener('click', async () => {
     if (!currentEditItem) return;
@@ -630,7 +591,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentEditItem.cleanTimestamp = currentEditItem.timestamp.replace(/\s+/g, '').replace(/s$/i, '');
     currentEditItem.prompt = editPromptInput.value.trim() || currentEditItem.prompt;
 
-    // Update card DOM
     const cardEl = document.getElementById(`card-${currentEditItem.index}`);
     if (cardEl) {
       cardEl.querySelector('.timestamp-badge').textContent = currentEditItem.timestamp;
@@ -643,7 +603,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await generateSingleItem(currentEditItem);
   });
 
-  // ================= 11. Download All as ZIP =================
+  // Download All ZIP
   downloadZipBtn.addEventListener('click', async () => {
     const completedItems = state.items.filter(it => it.status === 'done' && it.blob);
     if (completedItems.length === 0) {
@@ -652,7 +612,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     downloadZipBtn.disabled = true;
-    showToast(`Preparing ${completedItems.length} images into ZIP...`, 'info');
+    showToast(`Bundling ${completedItems.length} scenes into ZIP...`, 'info');
 
     try {
       await window.ZipExporter.export(completedItems, 'RenderX_Timeline_Images.zip');
