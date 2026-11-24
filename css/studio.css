@@ -544,7 +544,7 @@ body {
 }
 
 .canvas-toolbar {
-  height: 42px;
+  height: 44px;
   padding: 0 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
@@ -556,9 +556,75 @@ body {
 .stats-group {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 10.5px;
+  gap: 10px;
+  font-size: 10px;
   color: var(--text-muted);
+}
+
+.gallery-ready-pill {
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid #10B981;
+  background: rgba(16, 185, 129, 0.12);
+  color: #10B981;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.gallery-timeline-hint {
+  font-size: 9.5px;
+  color: #64748B;
+  font-family: var(--font-mono);
+}
+
+.canvas-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-gallery-action {
+  padding: 4px 10px;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+  background: #0B101E;
+}
+
+.btn-gallery-action.danger {
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #EF4444;
+}
+
+.btn-gallery-action.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.btn-gallery-action.warning {
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #F59E0B;
+}
+
+.btn-gallery-action.warning:hover {
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.btn-gallery-action.success {
+  background: linear-gradient(135deg, #0EA5E9, #10B981);
+  border: none;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+.btn-gallery-action.success:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
 }
 
 .stat-item strong {
@@ -749,13 +815,54 @@ body {
   overflow: hidden;
 }
 
-.card-actions {
+.card-header-bar {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
+  padding: 4px 6px;
+  background: #0B101E;
+  border-bottom: 1px solid #1E293B;
+}
+
+.badge-standby {
+  font-size: 8.5px;
+  color: #64748B;
+  background: rgba(100, 116, 139, 0.2);
+  border: 1px solid #334155;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-weight: 700;
+}
+
+.badge-acc {
+  font-size: 8.5px;
+  color: #10B981;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10B981;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-weight: 800;
+}
+
+.card-actions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   border-top: 1px solid #1E293B;
-  padding-top: 5px;
+  padding-top: 4px;
   margin-top: auto;
+}
+
+.action-subrow {
+  display: flex;
+  gap: 3px;
+}
+
+.action-subrow .btn-card-action {
+  flex: 1;
+  justify-content: center;
+  padding: 2.5px 3px;
+  font-size: 8.5px;
 }
 
 .btn-card-action {
@@ -781,6 +888,12 @@ body {
 
 .btn-card-action.btn-regen {
   color: #38BDF8;
+}
+
+.btn-card-action.active-final {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: #F59E0B;
+  color: #F59E0B;
 }
 
 /* Default 4 Dummy Boxes (Row 1) */
