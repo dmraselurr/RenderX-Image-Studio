@@ -40,7 +40,7 @@ PROFILES_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 GEMINI_SHARE_URL = "https://gemini.google.com/share/f8350ff50be0"
-FLOW_URL = "https://labs.google/fx/tools/flow"
+FLOW_URL = "https://flow.google.com/"
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _GOOGLE_SIGNIN_COOKIES = (
@@ -1120,36 +1120,25 @@ async def _flow_dismiss_banners(page: Page):
             pass
 
 
-async def _flow_enable_agent_mode(page: Page) -> bool:
-    """Ensure Google Flow Agent Mode is enabled before configuring & submitting prompts."""
-    agent_selectors = [
-        page.locator('button[aria-label*="Agent" i]:visible'),
-        page.locator('[role="switch"][aria-label*="Agent" i]:visible'),
-        page.locator('button:has-text("Agent"):visible'),
-        page.locator('label:has-text("Agent"):visible'),
-    ]
-    for probe in agent_selectors:
-        try:
-            if await probe.count() > 0:
-                el = probe.first
-                aria_checked = (await el.get_attribute("aria-checked") or "").lower()
-                aria_pressed = (await el.get_attribute("aria-pressed") or "").lower()
-                data_state = (await el.get_attribute("data-state") or "").lower()
-                if aria_checked == "true" or aria_pressed == "true" or data_state == "checked":
-                    return True
-                await el.click(timeout=3000)
-                await asyncio.sleep(0.7)
-                return True
-        except Exception:
-            continue
-    return False
+async def _flow_set_agent_mode(page: Page, enable: bool = True) -> bool:
+    """Explicitly turn Google Flow Agent Mode ON (spark) or OFF (spark_off) using its live aria-pressed state."""
+    try:
+        agent_btn = page.locator('button[aria-label="Flow Agent"]').first
+        await agent_btn.wait_for(state="visible", timeout=25000)
+        pressed = (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
+        if pressed != enable:
+            await agent_btn.click(timeout=5000)
+            await asyncio.sleep(0.9)
+        return (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
+    except Exception:
+        return False
 
 
 async def _flow_click_approve(page: Page) -> bool:
     """Auto-accept Flow Agent confirmation prompts if shown."""
-    for label in ("Approve", "Confirm", "Yes", "Proceed", "Kick off", "Continue"):
+    for label in ("Approve", "Confirm", "Yes", "Proceed", "Kick off", "Continue", "Generate", "Create"):
         try:
-            btn = page.get_by_role("button", name=re.compile(label, re.I))
+            btn = page.locator('.cdk-overlay-container button, [role="dialog"] button, main button').get_by_text(re.compile(rf"^{label}$", re.I))
             if await btn.count() > 0 and await btn.first.is_visible():
                 await btn.first.click(timeout=2500)
                 await asyncio.sleep(0.6)
@@ -1161,75 +1150,113 @@ async def _flow_click_approve(page: Page) -> bool:
 
 async def _flow_configure(page: Page, aspect_ratio: str = "1:1", is_video: bool = False):
     """
-    Configure Flow settings matching Studio selection:
-    - Mode: Image (default) or Video
-    - Aspect Ratio: 16:9 Desktop (Landscape), 9:16 Reels (Portrait), or 1:1 Square
-    - Output count: x1 (1 image generated per prompt)
+    Verified against live flow.google.com DOM:
+    When Flow Agent is OFF, button[aria-label="Settings trigger"] is visible and opens
+    exact role="radio" buttons for Image/Video, 16:9 / 9:16 / 1:1, and x1..x4.
+    Always configures these BEFORE turning Flow Agent ON!
     """
-    # Step 1: Select Image vs Video mode tab/button
+    # Settings trigger hides while Flow Agent is ON -> temporarily ensure Agent is OFF to lock settings
+    was_agent = False
     try:
-        wanted_modes = ("Videos", "Video") if is_video else ("Images", "Image", "Text to Image")
-        for cand in wanted_modes:
-            mbtn = page.get_by_role("button", name=cand, exact=True)
-            if await mbtn.count() > 0 and await mbtn.first.is_visible():
-                await mbtn.first.click(timeout=2500)
-                await asyncio.sleep(0.4)
-                break
+        agent_btn = page.locator('button[aria-label="Flow Agent"]').first
+        if await agent_btn.count() > 0 and await agent_btn.is_visible():
+            was_agent = (await agent_btn.get_attribute("aria-pressed") or "").lower() == "true"
+            if was_agent:
+                await _flow_set_agent_mode(page, enable=False)
     except Exception:
         pass
 
-    # Step 2: Open combined settings menu & apply Ratio + x1 single image output
-    ar_candidates = {
-        "9:16": ("crop_9_16", "9:16", "Portrait", "Portrait (9:16)", "Reels"),
-        "16:9": ("crop_16_9", "16:9", "Landscape", "Landscape (16:9)", "Desktop"),
-        "1:1": ("crop_square", "1:1", "Square", "Square (1:1)"),
-    }.get(aspect_ratio, ("crop_square", "1:1", "Square"))
+    ar_text_candidates = {
+        "9:16": ("9:16", "crop_9_16 9:16", "Portrait"),
+        "16:9": ("16:9", "crop_16_9 16:9", "Landscape"),
+        "1:1": ("1:1", "crop_square 1:1", "Square"),
+    }.get(aspect_ratio, ("1:1", "crop_square 1:1"))
 
     try:
-        combo = page.locator(
-            'button:has-text("crop_16_9"):visible, button:has-text("crop_9_16"):visible, '
-            'button:has-text("crop_square"):visible, button[aria-label*="crop" i]:visible, '
-            'button:has-text("x2"):visible, button:has-text("x4"):visible, button:has-text("x1"):visible'
-        ).first
-        if await combo.count() > 0 and await combo.is_visible():
-            await combo.click(timeout=4000)
-            await asyncio.sleep(0.5)
+        st_btn = page.locator('button[aria-label="Settings trigger"]').first
+        await st_btn.wait_for(state="visible", timeout=15000)
+        await st_btn.click(timeout=5000)
+        await asyncio.sleep(0.6)
 
-            for cand in ar_candidates:
-                opt = page.get_by_text(cand, exact=True).first
-                if await opt.count() > 0 and await opt.is_visible():
-                    try:
-                        await opt.click(timeout=2500)
-                        await asyncio.sleep(0.3)
-                        break
-                    except Exception:
-                        pass
+        overlay = page.locator(".cdk-overlay-container")
 
-            for cnt_lbl in ("x1", "×1", "1"):
-                copt = page.get_by_text(cnt_lbl, exact=True).first
-                if await copt.count() > 0 and await copt.is_visible():
-                    try:
-                        await copt.click(timeout=2500)
-                        await asyncio.sleep(0.3)
-                        break
-                    except Exception:
-                        pass
+        # 1) Image vs Video radio button
+        mode_pat = re.compile(r"\bVideo\b", re.I) if is_video else re.compile(r"\bImage\b", re.I)
+        m_radio = overlay.locator('[role="radio"], button').filter(has_text=mode_pat).first
+        if await m_radio.count() > 0 and await m_radio.is_visible():
+            try:
+                await m_radio.click(timeout=2500)
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
 
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(0.4)
+        # 2) Aspect Ratio radio button (e.g. "crop_9_16 9:16", "crop_16_9 16:9", "crop_square 1:1")
+        for cand in ar_text_candidates:
+            r_radio = overlay.locator('[role="radio"], button').filter(has_text=cand).first
+            if await r_radio.count() > 0 and await r_radio.is_visible():
+                try:
+                    await r_radio.click(timeout=2500)
+                    await asyncio.sleep(0.3)
+                    break
+                except Exception:
+                    pass
+
+        # 3) Output count = x1 (1 image generated per prompt)
+        cnt_radio = overlay.locator('[role="radio"], button').filter(has_text=re.compile(r"^x1$")).first
+        if await cnt_radio.count() > 0 and await cnt_radio.is_visible():
+            try:
+                await cnt_radio.click(timeout=2500)
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.4)
     except Exception:
         pass
+
+
+def _flow_ratio_label(ar: str) -> str:
+    if ar == "9:16":
+        return "9:16 Portrait / Reels vertical format"
+    if ar == "16:9":
+        return "16:9 Landscape / Desktop format"
+    return "1:1 Square format"
+
+
+async def _flow_paste_and_submit(page: Page, text: str):
+    compose = page.locator(
+        'div[aria-label="Describe your goal"][contenteditable="true"]:visible, '
+        'div[aria-label="What do you want to create?"][contenteditable="true"]:visible, '
+        '[contenteditable="true"]:visible, textarea:visible'
+    ).first
+    await compose.wait_for(state="visible", timeout=25000)
+    await compose.click()
+    await asyncio.sleep(0.2)
+    try:
+        await compose.fill(text)
+    except Exception:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.type(text, delay=2)
+    await asyncio.sleep(0.4)
+
+    start_btn = page.locator('button[aria-label="Start generation"]:visible, button[aria-label*="Create" i]:visible, button[aria-label*="Send" i]:visible').first
+    if await start_btn.count() > 0 and await start_btn.is_visible():
+        await start_btn.click()
+    else:
+        await compose.press("Enter")
 
 
 async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, timeout_sec: int = 120) -> str:
     clean_p = sanitize_prompt(item["fullPrompt"])
+    ar = item.get("aspectRatio", "1:1")
     is_video = "video" in sub_mode
 
     # If image-to-video & reference image provided, upload to Flow
     ref_b64 = item.get("referenceImage") or ""
     if is_video and ref_b64 and "," in ref_b64:
         try:
-            add_btn = page.get_by_role("button", name=re.compile("Add Media|Add|Upload", re.I)).first
+            add_btn = page.locator('button[aria-label="Add ingredients to the prompt box"]:visible, button[aria-label="Add media menu"]:visible').first
             if await add_btn.count() > 0 and await add_btn.is_visible():
                 await add_btn.click()
                 await asyncio.sleep(0.8)
@@ -1255,26 +1282,12 @@ async def _flow_submit_ui_shot(page: Page, item: Dict[str, Any], sub_mode: str, 
         )
     )
 
-    # IMPORTANT (automate_scenes.py): First textarea on Flow belongs to reCAPTCHA and is invisible; select :visible!
-    compose = page.locator('[contenteditable="true"]:visible, textarea:visible').last
-    await compose.wait_for(state="visible", timeout=25000)
-    await compose.click()
-    try:
-        await compose.fill(clean_p)
-    except Exception:
-        await page.keyboard.press("Control+A")
-        await page.keyboard.type(clean_p, delay=5)
-    await asyncio.sleep(0.4)
-
-    # Click Create/Generate/Send button or press Enter
-    create_btn = page.locator(
-        'button[aria-label*="Create" i]:visible, button[aria-label*="Generate" i]:visible, '
-        'button:has-text("Create"):visible, button:has-text("Generate"):visible, button[aria-label*="Send" i]:visible'
-    ).last
-    if await create_btn.count() > 0 and await create_btn.is_visible():
-        await create_btn.first.click()
-    else:
-        await compose.press("Enter")
+    directive = (
+        f"Generate 1 image ({ar} {_flow_ratio_label(ar)}): {clean_p}"
+        if not is_video else
+        f"Generate 1 video ({ar} {_flow_ratio_label(ar)}): {clean_p}"
+    )
+    await _flow_paste_and_submit(page, directive)
 
     deadline = time.time() + timeout_sec
     while time.time() < deadline and not state.should_stop:
@@ -1315,25 +1328,10 @@ async def run_flow_profile_worker(
         ctx = await get_or_open_worker_context(pid)
         page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-        captured: Dict[str, Any] = {}
-
-        def on_request(req):
-            if "aisandbox-pa.googleapis.com" in req.url:
-                hdrs = dict(req.headers)
-                is_gen = any(k in req.url for k in ("batchGenerateImages", "runImageFx", "flowMedia", "batchGenerateVideo"))
-                if is_gen and req.post_data:
-                    captured["url"] = req.url
-                    captured["headers"] = hdrs
-                    captured["body"] = req.post_data
-                elif hdrs.get("authorization"):
-                    captured["headers"] = {**captured.get("headers", {}), **hdrs}
-
-        page.on("request", on_request)
-
         try:
             await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Opening Google Flow in background Chrome..."})
             await page.goto(FLOW_URL, wait_until="domcontentloaded", timeout=90000)
-            await asyncio.sleep(3.5)
+            await asyncio.sleep(4.5)
             await _flow_dismiss_banners(page)
 
             if "accounts.google.com" in (page.url or "").lower():
@@ -1342,46 +1340,114 @@ async def run_flow_profile_worker(
             # Enter clean project workspace if on home list
             try:
                 new_btn = page.get_by_role("button", name="New project").first
-                if await new_btn.count() > 0 and await new_btn.is_visible():
-                    await new_btn.click()
-                    await asyncio.sleep(2.5)
+                if await new_btn.count() > 0:
+                    await new_btn.scroll_into_view_if_needed()
+                    await new_btn.click(force=True)
+                    for _ in range(25):
+                        await asyncio.sleep(1.0)
+                        if await page.locator('button[aria-label="Flow Agent"]').count() > 0:
+                            break
                     await _flow_dismiss_banners(page)
             except Exception:
                 pass
 
-            # Step 1: Activate Flow Agent Mode + configure x1 single-image & selected aspect ratio
-            agent_on = await _flow_enable_agent_mode(page)
             first_ar = assigned_items[0].get("aspectRatio", "1:1") if assigned_items else "1:1"
             is_video = "video" in sub_mode
+
+            # Step 1: Lock Image/Video mode, exact Aspect Ratio (9:16 Reels / 16:9 Desktop / 1:1 Square), and x1 (1 per prompt)
             await _flow_configure(page, first_ar, is_video=is_video)
+            # Step 2: Activate Flow Agent Mode ("spark", aria-pressed="true")
+            agent_on = await _flow_set_agent_mode(page, enable=True)
+
             await broadcast_ws({
                 "type": "DIAGNOSTIC_LOG",
-                "text": f"[{pid}] Google Flow ready ({'Agent Mode ON, ' if agent_on else ''}Ratio {first_ar}, x1 per prompt)"
+                "text": f"[{pid}] Flow Agent {'ON' if agent_on else 'Ready'} | Mode: {'Video' if is_video else 'Image'} | Ratio: {first_ar} | x1 per prompt"
             })
 
-            async def on_shot_done(res):
-                await handle_shot_result(pid, res, item_map, batch_dir, sub_mode)
+            media_sel = 'video[src], img[src*="googleusercontent"], img[src^="blob:"], img[src^="data:image"]'
 
-            try:
-                await page.expose_function("__rxOnShotDone", on_shot_done)
-            except Exception:
-                pass
+            # Batch mode (multi-prompt image generation): paste ALL prompts once into Flow Agent, stream outputs live, recover any missing individually
+            if len(assigned_items) > 1 and not is_video:
+                before_srcs = set(
+                    await page.evaluate(f"() => Array.from(document.querySelectorAll('{media_sel}')).map(el => el.src).filter(Boolean)")
+                )
+                for it in assigned_items:
+                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
 
-            # Submit all assigned prompts continuously in Flow Agent workspace, streaming each completed asset to Studio
-            last_ar = first_ar
-            for it in assigned_items:
-                if state.should_stop:
-                    break
-                cur_ar = it.get("aspectRatio", "1:1")
-                if cur_ar != last_ar:
-                    await _flow_configure(page, cur_ar, is_video=is_video)
-                    last_ar = cur_ar
-                await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
-                try:
-                    media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
-                    await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
-                except Exception as shot_err:
-                    await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
+                numbered = "\n".join(
+                    f"{i+1}. {sanitize_prompt(it['fullPrompt'])}"
+                    for i, it in enumerate(assigned_items)
+                )
+                batch_msg = (
+                    f"Generate exactly 1 separate image (x1) for each numbered prompt below in {_flow_ratio_label(first_ar)} ({first_ar}). "
+                    f"Generate all {len(assigned_items)} images in exact numbered order without skipping or merging:\n{numbered}"
+                )
+                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Pasted {len(assigned_items)} prompts into Flow Agent ({first_ar}, x1)..."})
+                await _flow_paste_and_submit(page, batch_msg)
+
+                collected_idx = 0
+                last_progress = time.time()
+                deadline = time.time() + max(180, len(assigned_items) * 35)
+                while collected_idx < len(assigned_items) and time.time() < deadline and not state.should_stop:
+                    await asyncio.sleep(1.5)
+                    await _flow_dismiss_banners(page)
+                    await _flow_click_approve(page)
+
+                    now_items = await page.evaluate(f"""() => {{
+                        const els = Array.from(document.querySelectorAll('{media_sel}'));
+                        return els.map(el => ({{ tag: el.tagName, src: el.src || '', w: el.naturalWidth || el.videoWidth || 200 }}));
+                    }}""")
+                    for entry in now_items:
+                        src = entry.get("src", "")
+                        if not src or src in before_srcs:
+                            continue
+                        if entry.get("tag") == "IMG" and entry.get("w", 0) < 64:
+                            continue
+                        before_srcs.add(src)
+                        if collected_idx < len(assigned_items):
+                            it = assigned_items[collected_idx]
+                            collected_idx += 1
+                            last_progress = time.time()
+                            media_val = src
+                            if src.startswith("blob:"):
+                                media_val = await page.evaluate("""async (s) => {
+                                    const r = await fetch(s);
+                                    const b = await r.blob();
+                                    return await new Promise(res => { const fr = new FileReader(); fr.onloadend = () => res(fr.result); fr.readAsDataURL(b); });
+                                }""", src)
+                            await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media_val}, item_map, batch_dir, sub_mode)
+
+                    # If Flow Agent stopped producing after 40s idle following partial results, break to recover missing ones cleanly
+                    if collected_idx > 0 and (time.time() - last_progress) > 45:
+                        break
+                    if collected_idx == 0 and (time.time() - last_progress) > 45:
+                        break
+
+                # Recover any unproduced prompt individually inside Flow Agent or mark failed
+                for it in assigned_items[collected_idx:]:
+                    if state.should_stop:
+                        break
+                    try:
+                        media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=110)
+                        await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
+                    except Exception as shot_err:
+                        await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
+            else:
+                last_ar = first_ar
+                for it in assigned_items:
+                    if state.should_stop:
+                        break
+                    cur_ar = it.get("aspectRatio", "1:1")
+                    if cur_ar != last_ar:
+                        await _flow_configure(page, cur_ar, is_video=is_video)
+                        await _flow_set_agent_mode(page, enable=True)
+                        last_ar = cur_ar
+                    await broadcast_ws({"type": "ITEM_STARTED", "index": it["index"]})
+                    try:
+                        media = await _flow_submit_ui_shot(page, it, sub_mode, timeout_sec=120)
+                        await handle_shot_result(pid, {"index": it["index"], "ok": True, "httpStatus": 200, "dataUrl": media}, item_map, batch_dir, sub_mode)
+                    except Exception as shot_err:
+                        await handle_shot_result(pid, {"index": it["index"], "ok": False, "httpStatus": 0, "error": str(shot_err)}, item_map, batch_dir, sub_mode)
 
         except Exception as err:
             for it in assigned_items:
@@ -1740,7 +1806,7 @@ async def api_engine_check(req: EngineCheckReq):
     logged_in_profs = [p for p in profiles if p.get("logged_in")]
     enabled_logged = [p for p in logged_in_profs if p.get("enabled")]
 
-    host = "labs.google" if req.engine == "google-flow" else "gemini.google.com"
+    host = "flow.google.com" if req.engine == "google-flow" else "gemini.google.com"
     engine_label = "Google Flow" if req.engine == "google-flow" else "Gemini Canvas"
 
     def check_net() -> bool:
