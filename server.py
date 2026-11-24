@@ -682,6 +682,47 @@ async def _read_canvas_prompt_count(frame: Frame) -> Optional[int]:
     return None
 
 
+async def _canvas_panel_open(frame: Frame, panel_sel: str) -> bool:
+    try:
+        return await frame.locator(f"{panel_sel}:not(.hidden)").count() > 0
+    except Exception:
+        return False
+
+
+async def _canvas_set_switch(frame: Frame, toggle_sel: str, panel_sel: str, want: bool = True) -> bool:
+    """Exact bulkgem.py 3-step switch logic: opens/closes Tailwind sr-only consistency panels reliably."""
+    box = frame.locator(toggle_sel)
+    if await box.count() == 0:
+        return False
+    if (await box.is_checked() == want) and (await _canvas_panel_open(frame, panel_sel) == want):
+        return True
+
+    async def try_label():
+        await box.locator("xpath=ancestor::label[1]").first.click(timeout=3000)
+
+    async def try_check():
+        await box.set_checked(want, force=True)
+
+    async def try_js():
+        await box.evaluate("""(el, w) => {
+            if (el.checked !== w) {
+                el.checked = w;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+        }""", want)
+
+    for attempt in (try_label, try_check, try_js):
+        try:
+            await attempt()
+        except Exception:
+            continue
+        await asyncio.sleep(0.6)
+        if (await _canvas_panel_open(frame, panel_sel) == want) and (await box.is_checked() == want):
+            return True
+    return await _canvas_panel_open(frame, panel_sel) == want
+
+
 async def run_canvas_profile_worker(
     profile: Dict[str, Any],
     assigned_items: List[Dict[str, Any]],
@@ -738,47 +779,37 @@ async def run_canvas_profile_worker(
                     except Exception:
                         pass
 
-                # Optional Character Consistency (ref image / description)
+                # Sync Character Consistency from Studio Dashboard -> Canvas (#ccToggle + #ccOptionsContainer)
                 char_ref_b64 = options.get("charImageBase64") or ""
-                char_desc = options.get("charDesc") or ""
+                char_desc = (options.get("charDesc") or "").strip()
+                char_locked = False
                 if (char_ref_b64 and "," in char_ref_b64) or char_desc:
                     try:
-                        cc_toggle = frame.locator("#ccToggle")
-                        if await cc_toggle.count() > 0 and not await cc_toggle.is_checked():
-                            await cc_toggle.evaluate("""(el) => {
-                                el.checked = true;
-                                el.dispatchEvent(new Event('input', {bubbles: true}));
-                                el.dispatchEvent(new Event('change', {bubbles: true}));
-                            }""")
-                            await asyncio.sleep(0.6)
+                        char_locked = await _canvas_set_switch(frame, "#ccToggle", "#ccOptionsContainer", want=True)
                         if char_desc and await frame.locator("textarea.cc-text-input").count() > 0:
                             await frame.locator("textarea.cc-text-input").first.fill(char_desc[:600])
-                        if char_ref_b64 and "," in char_ref_b64:
+                        if char_ref_b64 and "," in char_ref_b64 and await frame.locator("input.cc-image-input").count() > 0:
                             fd, tmp_img = tempfile.mkstemp(prefix="rx_char_", suffix=".png")
                             os.close(fd)
                             Path(tmp_img).write_bytes(base64.b64decode(char_ref_b64.split(",", 1)[1]))
                             await frame.locator("input.cc-image-input").first.set_input_files(tmp_img)
-                            await asyncio.sleep(0.8)
+                            await asyncio.sleep(1.2)
                             try:
                                 os.remove(tmp_img)
                             except OSError:
                                 pass
                     except Exception as cc_err:
                         await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Char ref note: {cc_err}"})
+                else:
+                    await _canvas_set_switch(frame, "#ccToggle", "#ccOptionsContainer", want=False)
 
-                # Optional Style Consistency (ref image / description)
+                # Sync Style Consistency from Studio Dashboard -> Canvas (#scToggle + #scOptionsContainer)
                 style_ref_b64 = options.get("styleImageBase64") or ""
-                style_desc = options.get("styleDesc") or ""
+                style_desc = (options.get("styleDesc") or "").strip()
+                style_locked = False
                 if (style_ref_b64 and "," in style_ref_b64) or style_desc:
                     try:
-                        sc_toggle = frame.locator("#scToggle")
-                        if await sc_toggle.count() > 0 and not await sc_toggle.is_checked():
-                            await sc_toggle.evaluate("""(el) => {
-                                el.checked = true;
-                                el.dispatchEvent(new Event('input', {bubbles: true}));
-                                el.dispatchEvent(new Event('change', {bubbles: true}));
-                            }""")
-                            await asyncio.sleep(0.6)
+                        style_locked = await _canvas_set_switch(frame, "#scToggle", "#scOptionsContainer", want=True)
                         if style_desc and await frame.locator("#scText").count() > 0:
                             await frame.locator("#scText").first.fill(style_desc[:600])
                         if style_ref_b64 and "," in style_ref_b64 and await frame.locator("#scImage").count() > 0:
@@ -786,16 +817,30 @@ async def run_canvas_profile_worker(
                             os.close(fd)
                             Path(tmp_simg).write_bytes(base64.b64decode(style_ref_b64.split(",", 1)[1]))
                             await frame.locator("#scImage").first.set_input_files(tmp_simg)
-                            await asyncio.sleep(0.8)
+                            try:
+                                await frame.wait_for_selector("#scImagePreviewContainer:not(.hidden)", timeout=10000)
+                            except Exception:
+                                await asyncio.sleep(1.2)
                             try:
                                 os.remove(tmp_simg)
                             except OSError:
                                 pass
                     except Exception as sc_err:
                         await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Style ref note: {sc_err}"})
+                else:
+                    await _canvas_set_switch(frame, "#scToggle", "#scOptionsContainer", want=False)
 
-                # Fill prompts cleanly (1 line per prompt) and verify counter matches!
-                clean_prompts = [sanitize_prompt(it["fullPrompt"]) for it in group_items]
+                # When Character/Style are locked natively in Canvas panels, send clean scene prompt + negative avoidances
+                neg_prompt = (options.get("negPrompt") or "").strip()
+                clean_prompts = []
+                for it in group_items:
+                    if char_locked or style_locked:
+                        base_p = sanitize_prompt(it.get("rawPrompt") or it["fullPrompt"])
+                        if neg_prompt:
+                            base_p = f"{base_p} Clean composition, strictly avoiding {neg_prompt}."
+                        clean_prompts.append(base_p)
+                    else:
+                        clean_prompts.append(sanitize_prompt(it["fullPrompt"]))
                 joined_text = "\n".join(clean_prompts)
                 prompt_box = frame.locator("#prompts")
                 if await prompt_box.count() == 0:
@@ -818,7 +863,7 @@ async def run_canvas_profile_worker(
                 if await gen_btn.count() == 0:
                     gen_btn = frame.get_by_role("button", name=re.compile("generate images", re.I)).first
                 await gen_btn.click()
-                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Canvas batch started ({len(group_items)} prompts) — streaming live..."})
+                await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"[{pid}] Canvas locked (Ratio={ar}, Char={'ON' if char_locked else 'OFF'}, Style={'ON' if style_locked else 'OFF'}) — generating {len(group_items)} prompt(s)..."})
 
                 # Live poll #image-grid tiles as Gemini Canvas completes or fails each prompt concurrently
                 done_slots = set()
