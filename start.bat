@@ -12,9 +12,9 @@ echo   RenderX Image Studio PRO - 8-Profile Desktop Cluster
 echo   Starting local backend on http://127.0.0.1:8899 ...
 echo ============================================================
 
-start "RenderX-Server" /min "%PY_BIN%" "%~dp0server.py"
+powershell -NoProfile -Command "$c = Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue; if (-not $c) { Start-Process -FilePath '%PY_BIN%' -ArgumentList '\"%~dp0server.py\"' -WorkingDirectory '%~dp0' -WindowStyle Minimized }"
 
-timeout /t 2 /nobreak >nul
+powershell -NoProfile -Command "for ($i=0; $i -lt 25; $i++) { try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8899/api/status' -UseBasicParsing -TimeoutSec 1; if ($r.StatusCode -eq 200) { break } } catch {}; Start-Sleep -Milliseconds 300 }"
 
 set "CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe"
 if exist "%CHROME_EXE%" (
