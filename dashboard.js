@@ -671,9 +671,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function revokeGalleryBlobUrls() {
+    (state.items || []).forEach(it => {
+      if (it && typeof it.dataUrl === 'string' && it.dataUrl.startsWith('blob:')) {
+        try { URL.revokeObjectURL(it.dataUrl); } catch {}
+      }
+    });
+  }
+
   if (globalResetBtn) {
     globalResetBtn.addEventListener('click', () => {
       if (confirm('Reset RenderX Studio? This clears all prompts and gallery shots.')) {
+        revokeGalleryBlobUrls();
         if (promptsTextarea) promptsTextarea.value = '';
         updatePromptCount();
         resetGalleryToStandby();
@@ -685,6 +694,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ================= 8. Live Gallery Cards =================
   function renderLiveGrid(items) {
     if (!thumbnailGrid) return;
+    revokeGalleryBlobUrls();
     thumbnailGrid.innerHTML = '';
     const isVideo = (state.engine === 'google-flow' && state.subMode.includes('video'));
     const ext = isVideo ? 'mp4' : 'png';
