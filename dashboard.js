@@ -911,11 +911,13 @@ document.addEventListener('DOMContentLoaded', () => {
       showFailoverAlert(msg.message, msg.nextProfileId || null);
       updateDiagnosticLine(msg.message || '', true);
       showToast(msg.message, 'error');
+    } else if (msg.type === 'BULK_SHOT_UPDATED') {
+      handleBulkShotUpdated(msg);
     } else if (msg.type === 'BULK_PROJECT_STATUS') {
       updateBulkProjectStatus(msg);
     } else if (msg.type === 'BULK_FINISHED') {
-      if (btnStartBulk) { btnStartBulk.disabled = false; btnStartBulk.textContent = '⚡ Start Bulk Projects'; }
-      showToast(msg.stopped ? 'Bulk generation stopped' : 'Bulk generation finished & RAM freed!');
+      if (btnStartBulk) { btnStartBulk.disabled = false; btnStartBulk.textContent = '⚡ Run All Projects'; }
+      showToast(msg.stopped ? 'Bulk generation stopped' : 'All Bulk projects finished & Chrome RAM freed!');
     } else if (msg.type === 'QUEUE_FINISHED') {
       syncBatchStateFromServer().finally(() => finishQueue());
     }
@@ -1188,18 +1190,61 @@ document.addEventListener('DOMContentLoaded', () => {
   const failoverAlertText = document.getElementById('failoverAlertText');
   const btnFailoverLogin = document.getElementById('btnFailoverLogin');
   const btnDismissFailover = document.getElementById('btnDismissFailover');
+  const btnSingleMode = document.getElementById('btnSingleMode');
   const btnBulkMode = document.getElementById('btnBulkMode');
   const btnBackSingle = document.getElementById('btnBackSingle');
   const bulkWorkspace = document.getElementById('bulkWorkspace');
   const sidebarContainer = document.getElementById('sidebarContainer');
   const singleGalleryArea = document.querySelector('.gallery-area');
+  const bulkSetupBoxesBar = document.getElementById('bulkSetupBoxesBar');
   const bulkProjectsGrid = document.getElementById('bulkProjectsGrid');
-  const bulkUnlockedBadge = document.getElementById('bulkUnlockedBadge');
+  const bulkSummaryText = document.getElementById('bulkSummaryText');
   const btnStartBulk = document.getElementById('btnStartBulk');
   const btnStopBulk = document.getElementById('btnStopBulk');
 
+  // Expanded Input Modal elements
+  const bulkInputModal = document.getElementById('bulkInputModal');
+  const bulkModalTitle = document.getElementById('bulkModalTitle');
+  const closeBulkInputModalBtn = document.getElementById('closeBulkInputModalBtn');
+  const biProjectName = document.getElementById('biProjectName');
+  const biEngine = document.getElementById('biEngine');
+  const biAspect = document.getElementById('biAspect');
+  const biCharDesc = document.getElementById('biCharDesc');
+  const biCharFile = document.getElementById('biCharFile');
+  const biCharThumb = document.getElementById('biCharThumb');
+  const biCharClear = document.getElementById('biCharClear');
+  const biStyleDesc = document.getElementById('biStyleDesc');
+  const biStyleFile = document.getElementById('biStyleFile');
+  const biStyleThumb = document.getElementById('biStyleThumb');
+  const biStyleClear = document.getElementById('biStyleClear');
+  const biNegPrompt = document.getElementById('biNegPrompt');
+  const biPrompts = document.getElementById('biPrompts');
+  const biPromptCount = document.getElementById('biPromptCount');
+  const biSampleBtn = document.getElementById('biSampleBtn');
+  const biCancelBtn = document.getElementById('biCancelBtn');
+  const biSaveBtn = document.getElementById('biSaveBtn');
+
   let pendingFailoverLoginPid = null;
   let bulkPairsCache = [];
+  let bulkFilterMode = 'all';
+  let editingBulkIdx = 0;
+
+  const bulkProjectsState = [0, 1, 2, 3].map(i => ({
+    projectIndex: i,
+    projectName: `Bulk_Project_0${i + 1}`,
+    engine: 'gemini-canvas',
+    aspectRatio: '16:9',
+    charDesc: '',
+    charImageBase64: '',
+    styleDesc: '',
+    styleImageBase64: '',
+    negPrompt: 'bad anatomy, extra fingers, blurry, watermark',
+    promptsText: '',
+    items: [], // [{ index, timestamp, cleanTimestamp, prompt, filename, status, dataUrl, error }]
+    status: 'standby', // standby | running | failover | done | partial
+    activeProfile: '',
+    outputDir: '',
+  }));
 
   function showFailoverAlert(msg, loginPid) {
     if (!failoverAlertBanner || !failoverAlertText) return;
@@ -1217,15 +1262,19 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnFailoverLogin) {
     btnFailoverLogin.addEventListener('click', async () => {
       if (!pendingFailoverLoginPid) return;
-      try {
-        await fetch(`/api/profiles/${pendingFailoverLoginPid}/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ engine: state.engine || 'gemini-canvas' }),
-        });
-        showToast(`Opening Chrome login for P${pendingFailoverLoginPid.replace('acc', '')}...`);
-      } catch {}
+      await loginProfileById(pendingFailoverLoginPid);
     });
+  }
+
+  async function loginProfileById(pid) {
+    try {
+      await fetch(`/api/profiles/${pid}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: state.engine || 'gemini-canvas' }),
+      });
+      showToast(`Opening Chrome login for P${pid.replace('acc', '')}...`);
+    } catch {}
   }
 
   function setBulkView(open) {
@@ -1233,16 +1282,377 @@ document.addEventListener('DOMContentLoaded', () => {
     bulkWorkspace.style.display = open ? 'flex' : 'none';
     sidebarContainer.style.display = open ? 'none' : '';
     singleGalleryArea.style.display = open ? 'none' : '';
-    if (btnBulkMode) btnBulkMode.classList.toggle('active', open);
+    if (btnSingleMode) {
+      btnSingleMode.style.background = open ? 'transparent' : 'rgba(56,189,248,0.18)';
+      btnSingleMode.style.color = open ? '#94A3B8' : '#E0F2FE';
+    }
+    if (btnBulkMode) {
+      btnBulkMode.style.background = open ? 'rgba(168,85,247,0.25)' : 'transparent';
+      btnBulkMode.style.color = open ? '#F3E8FF' : '#C4B5FD';
+    }
   }
+
+  function parseBulkItems(projIdx, text, aspectRatio) {
+    const lines = (text || '').split('\n').map(l => l.trim()).filter(Boolean);
+    const baseOffset = (projIdx + 1) * 1000;
+    return lines.map((line, k) => {
+      const parsed = window.RenderXParser ? window.RenderXParser.parseLine(line, k + 1) : null;
+      const idx = baseOffset + k + 1;
+      const pad = String(k + 1).padStart(2, '0');
+      const cleanTs = parsed ? parsed.cleanTimestamp : `shot_${pad}`;
+      return {
+        index: idx,
+        slotNumber: k + 1,
+        rawPrompt: parsed ? parsed.prompt : line,
+        prompt: parsed ? parsed.prompt : line,
+        timestamp: parsed ? parsed.timestamp : `00.00-04.00`,
+        cleanTimestamp: cleanTs,
+        filename: `${pad}_${cleanTs}.png`,
+        aspectRatio,
+        status: 'standby',
+        dataUrl: '',
+        error: '',
+      };
+    });
+  }
+
+  function updateBulkSummaryAndTabs() {
+    let activeProj = 0;
+    let totalDone = 0;
+    let totalShots = 0;
+    bulkPairsCache.forEach(pair => {
+      const ps = bulkProjectsState[pair.projectIndex];
+      const done = ps.items.filter(it => it.status === 'done').length;
+      const tot = ps.items.length;
+      if (pair.unlocked && tot > 0) activeProj++;
+      totalDone += done;
+      totalShots += tot;
+      const tabBtn = document.querySelector(`.bulk-tab-btn[data-filter="${pair.projectIndex}"]`);
+      if (tabBtn) {
+        tabBtn.textContent = pair.unlocked
+          ? `Project ${pair.projectIndex + 1} (${pair.primaryLabel}→${pair.backupLabel}) ${done}/${tot}`
+          : `Project ${pair.projectIndex + 1} (Locked)`;
+      }
+    });
+    if (bulkSummaryText) {
+      bulkSummaryText.textContent = `Active Projects: ${activeProj} | Total: ${totalDone} / ${totalShots} Ready`;
+    }
+  }
+
+  function renderBulkWorkspace() {
+    if (!bulkSetupBoxesBar || !bulkProjectsGrid) return;
+    bulkSetupBoxesBar.innerHTML = '';
+    bulkProjectsGrid.innerHTML = '';
+    bulkProjectsGrid.style.gridTemplateColumns = bulkFilterMode === 'all' ? 'repeat(2, minmax(0, 1fr))' : '1fr';
+
+    bulkPairsCache.forEach(pair => {
+      const i = pair.projectIndex;
+      const ps = bulkProjectsState[i];
+
+      // 1. Compact Click-to-Configure Setup Box (Top Row of 4)
+      const box = document.createElement('button');
+      box.type = 'button';
+      box.style.cssText = `text-align:left; padding:8px 10px; border-radius:8px; border:1px solid ${pair.unlocked ? (ps.items.length ? '#38BDF8' : '#1E293B') : '#334155'}; background:${pair.unlocked ? '#0A0F1D' : '#070A12'}; color:#E2E8F0; cursor:${pair.unlocked ? 'pointer' : 'not-allowed'}; opacity:${pair.unlocked ? '1' : '0.55'}; display:flex; align-items:center; justify-content:space-between; gap:6px;`;
+      box.innerHTML = `
+        <div>
+          <div style="font-size:10.5px; font-weight:800; color:${pair.unlocked ? '#F8FAFC' : '#94A3B8'};">📋 Project ${i + 1} Setup (${pair.primaryLabel}→${pair.backupLabel})</div>
+          <div style="font-size:9.5px; color:${ps.items.length ? '#38BDF8' : '#64748B'}; margin-top:2px;">${pair.unlocked ? (ps.items.length ? `${ps.items.length} shot(s) configured • Click to edit` : 'Click to add prompts & refs') : `Locked — Login ${pair.primaryLabel} + ${pair.backupLabel}`}</div>
+        </div>
+        <span style="font-size:10px; font-weight:800; color:${pair.unlocked ? '#6EE7B7' : '#FCA5A5'};">${pair.unlocked ? (ps.items.length ? '✅ Ready' : '+ Input') : '🔒'}</span>
+      `;
+      if (pair.unlocked) {
+        box.addEventListener('click', () => openBulkInputModal(i, pair));
+      }
+      bulkSetupBoxesBar.appendChild(box);
+
+      if (bulkFilterMode !== 'all' && Number(bulkFilterMode) !== i) return;
+
+      // 2. Live 2x2 Bulk Monitoring Card (Matches Mockup Architecture)
+      const card = document.createElement('div');
+      card.id = `bulk-proj-${i}`;
+      card.style.cssText = `background:#0A0F1D; border:1px solid ${pair.unlocked ? '#1E293B' : '#263042'}; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:9px; opacity:${pair.unlocked ? '1' : '0.6'};`;
+
+      const doneCnt = ps.items.filter(it => it.status === 'done').length;
+      const totCnt = ps.items.length;
+      const pct = totCnt ? Math.round((doneCnt / totCnt) * 100) : 0;
+
+      let statusPill = '';
+      if (!pair.unlocked) {
+        const missingBtnPid = !pair.primaryLoggedIn ? pair.primaryId : pair.backupId;
+        const missingLbl = !pair.primaryLoggedIn ? pair.primaryLabel : pair.backupLabel;
+        statusPill = `
+          <span style="padding:2px 8px; border-radius:5px; background:rgba(239,68,68,0.14); border:1px solid rgba(239,68,68,0.4); color:#FCA5A5; font-size:9.5px; font-weight:800;">Locked: Login ${pair.primaryLabel} + ${pair.backupLabel} to unlock</span>
+          <button type="button" class="bulk-login-btn" data-pid="${missingBtnPid}" style="padding:3px 8px; border-radius:5px; border:1px solid #475569; background:#0F172A; color:#E2E8F0; font-size:9.5px; font-weight:700; cursor:pointer;">🔑 Login ${missingLbl}</button>
+        `;
+      } else if (ps.status === 'failover') {
+        statusPill = `<span id="bulk-status-${i}" style="padding:2px 8px; border-radius:5px; background:rgba(245,158,11,0.18); border:1px solid rgba(245,158,11,0.5); color:#FCD34D; font-size:9.5px; font-weight:800;">🔄 5s Failover → ${ps.activeProfile || pair.backupLabel}</span>`;
+      } else if (ps.status === 'running') {
+        statusPill = `<span id="bulk-status-${i}" style="padding:2px 8px; border-radius:5px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.45); color:#6EE7B7; font-size:9.5px; font-weight:800;">Using ${ps.activeProfile || pair.primaryLabel}</span>`;
+      } else if (ps.status === 'done' || ps.status === 'partial') {
+        statusPill = `<span id="bulk-status-${i}" style="padding:2px 8px; border-radius:5px; background:rgba(16,185,129,0.16); border:1px solid rgba(16,185,129,0.45); color:#6EE7B7; font-size:9.5px; font-weight:800;">✅ ${doneCnt}/${totCnt} Complete</span>`;
+      } else {
+        statusPill = `<span id="bulk-status-${i}" style="padding:2px 8px; border-radius:5px; background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.35); color:#7DD3FC; font-size:9.5px; font-weight:800;">Ready (${pair.primaryLabel}→${pair.backupLabel})</span>`;
+      }
+
+      const headerActions = pair.unlocked ? `
+        <div style="display:flex; align-items:center; gap:5px;">
+          <button type="button" class="bulk-edit-inputs-btn" data-idx="${i}" style="padding:3px 8px; border-radius:5px; border:1px solid #334155; background:#0F172A; color:#38BDF8; font-size:9.5px; font-weight:700; cursor:pointer;">✏️ Inputs</button>
+          <button type="button" class="bulk-open-folder-btn" data-idx="${i}" style="padding:3px 8px; border-radius:5px; border:1px solid #334155; background:#0F172A; color:#E2E8F0; font-size:9.5px; font-weight:700; cursor:pointer;">Open Folder</button>
+          <button type="button" class="bulk-zip-btn" data-idx="${i}" style="padding:3px 8px; border-radius:5px; border:1px solid #334155; background:#0F172A; color:#E2E8F0; font-size:9.5px; font-weight:700; cursor:pointer;">ZIP</button>
+        </div>
+      ` : '';
+
+      // Progress Bar
+      const progressHtml = pair.unlocked ? `
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="flex:1; height:6px; background:#050811; border-radius:999px; overflow:hidden; border:1px solid #1E293B;">
+            <div style="width:${pct}%; height:100%; background:linear-gradient(90deg,#38BDF8,#5B5BD6); transition:width 0.25s ease;"></div>
+          </div>
+          <span style="font-size:9.5px; font-weight:800; color:#94A3B8; white-space:nowrap;">${pct}% • ${doneCnt}/${totCnt} Ready</span>
+        </div>
+      ` : '';
+
+      // Live Thumbnail Strip
+      let slotsHtml = '';
+      if (!pair.unlocked) {
+        slotsHtml = [1, 2, 3, 4].map(() => `
+          <div style="height:78px; border-radius:8px; background:#070B14; border:1px solid #1E293B; display:flex; align-items:center; justify-content:center; color:#475569; font-size:16px;">🔒</div>
+        `).join('');
+      } else if (!ps.items.length) {
+        slotsHtml = `
+          <div class="bulk-empty-click" data-idx="${i}" style="grid-column:1/-1; height:78px; border-radius:8px; border:1px dashed #334155; background:#060A14; display:flex; align-items:center; justify-content:center; color:#64748B; font-size:10.5px; cursor:pointer;">
+            Click "✏️ Inputs" or Project ${i + 1} Setup above to add prompts &amp; start simultaneously
+          </div>
+        `;
+      } else {
+        slotsHtml = ps.items.map((it, sIdx) => {
+          if (it.status === 'done' && it.dataUrl) {
+            return `
+              <div class="bulk-thumb-slot" data-pidx="${i}" data-sidx="${sIdx}" style="position:relative; height:78px; border-radius:8px; overflow:hidden; border:1px solid rgba(16,185,129,0.5); background:#05070B; cursor:pointer;" title="${escapeHtml(it.prompt)}">
+                <img src="${it.dataUrl}" style="width:100%; height:100%; object-fit:cover; display:block;">
+                <span style="position:absolute; top:4px; right:4px; padding:1px 5px; border-radius:4px; background:rgba(16,185,129,0.9); color:#fff; font-size:8px; font-weight:800;">Ready</span>
+                <span style="position:absolute; bottom:3px; left:4px; padding:1px 4px; border-radius:3px; background:rgba(5,7,11,0.75); color:#CBD5E1; font-size:8px;">Slot ${sIdx + 1}</span>
+              </div>
+            `;
+          }
+          if (it.status === 'retrying') {
+            return `
+              <div style="height:78px; border-radius:8px; border:1px solid rgba(245,158,11,0.55); background:rgba(245,158,11,0.1); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; padding:4px; text-align:center;">
+                <span style="font-size:12px;">⚠️</span>
+                <span style="font-size:8.5px; font-weight:800; color:#FCD34D;">Retrying on ${it.retryProfile || pair.backupLabel}</span>
+              </div>
+            `;
+          }
+          if (it.status === 'failed') {
+            return `
+              <div style="height:78px; border-radius:8px; border:1px solid rgba(239,68,68,0.5); background:rgba(239,68,68,0.1); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; padding:4px; text-align:center;" title="${escapeHtml(it.error)}">
+                <span style="font-size:11px;">❌</span>
+                <span style="font-size:8.5px; font-weight:700; color:#FCA5A5;">Slot ${sIdx + 1} Failed</span>
+              </div>
+            `;
+          }
+          if (it.status === 'pending') {
+            return `
+              <div style="height:78px; border-radius:8px; border:1px solid rgba(56,189,248,0.35); background:#070B16; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;">
+                <div class="spin-circle" style="width:18px; height:18px;"></div>
+                <span style="font-size:8.5px; color:#7DD3FC; font-weight:700;">Generating...</span>
+              </div>
+            `;
+          }
+          return `
+            <div style="height:78px; border-radius:8px; border:1px solid #1E293B; background:#070B14; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:5px; text-align:center;">
+              <span style="font-size:9px; font-weight:800; color:#94A3B8;">Slot ${sIdx + 1}</span>
+              <span style="font-size:8px; color:#64748B; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;">${escapeHtml(it.prompt)}</span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      card.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; flex-wrap:wrap;">
+          <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+            <strong style="font-size:12px; color:${pair.unlocked ? '#F8FAFC' : '#64748B'};">${pair.unlocked ? escapeHtml(ps.projectName) : `Project ${i + 1}`} (${pair.primaryLabel} ${pair.unlocked ? '→' : '/'} ${pair.backupLabel})</strong>
+            ${statusPill}
+          </div>
+          ${headerActions}
+        </div>
+        ${progressHtml}
+        <div style="display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:7px;">${slotsHtml}</div>
+      `;
+
+      bulkProjectsGrid.appendChild(card);
+    });
+
+    // Attach card event listeners
+    bulkProjectsGrid.querySelectorAll('.bulk-login-btn').forEach(btn => {
+      btn.addEventListener('click', () => loginProfileById(btn.dataset.pid));
+    });
+    bulkProjectsGrid.querySelectorAll('.bulk-edit-inputs-btn, .bulk-empty-click').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.dataset.idx);
+        const pair = bulkPairsCache.find(p => p.projectIndex === idx);
+        if (pair) openBulkInputModal(idx, pair);
+      });
+    });
+    bulkProjectsGrid.querySelectorAll('.bulk-open-folder-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await fetch(`/api/bulk/project/${btn.dataset.idx}/open-folder`, { method: 'POST' });
+      });
+    });
+    bulkProjectsGrid.querySelectorAll('.bulk-zip-btn').forEach(btn => {
+      btn.addEventListener('click', () => downloadBulkProjectZip(Number(btn.dataset.idx)));
+    });
+    bulkProjectsGrid.querySelectorAll('.bulk-thumb-slot').forEach(slot => {
+      slot.addEventListener('click', () => {
+        const ps = bulkProjectsState[Number(slot.dataset.pidx)];
+        const it = ps?.items[Number(slot.dataset.sidx)];
+        if (it && it.dataUrl) openLightbox(it);
+      });
+    });
+
+    updateBulkSummaryAndTabs();
+  }
+
+  function openBulkInputModal(idx, pair) {
+    editingBulkIdx = idx;
+    const ps = bulkProjectsState[idx];
+    if (bulkModalTitle) bulkModalTitle.textContent = `Configure Project ${idx + 1} (${pair.primaryLabel} → Backup ${pair.backupLabel})`;
+    if (biProjectName) biProjectName.value = ps.projectName;
+    if (biEngine) biEngine.value = ps.engine;
+    if (biAspect) biAspect.value = ps.aspectRatio;
+    if (biCharDesc) biCharDesc.value = ps.charDesc;
+    if (biStyleDesc) biStyleDesc.value = ps.styleDesc;
+    if (biNegPrompt) biNegPrompt.value = ps.negPrompt;
+    if (biPrompts) biPrompts.value = ps.promptsText;
+    if (biCharThumb) { biCharThumb.src = ps.charImageBase64 || ''; biCharThumb.style.display = ps.charImageBase64 ? 'block' : 'none'; }
+    if (biStyleThumb) { biStyleThumb.src = ps.styleImageBase64 || ''; biStyleThumb.style.display = ps.styleImageBase64 ? 'block' : 'none'; }
+    updateBiPromptCount();
+    if (bulkInputModal) bulkInputModal.classList.add('open');
+  }
+
+  function updateBiPromptCount() {
+    if (!biPrompts || !biPromptCount) return;
+    const cnt = biPrompts.value.split('\n').map(l => l.trim()).filter(Boolean).length;
+    biPromptCount.textContent = `${cnt} shot${cnt === 1 ? '' : 's'}`;
+  }
+  if (biPrompts) biPrompts.addEventListener('input', updateBiPromptCount);
+  if (biSampleBtn && biPrompts) {
+    biSampleBtn.addEventListener('click', () => {
+      biPrompts.value = [
+        `00.00-04.00 | Project ${editingBulkIdx + 1} cinematic wide establishing shot at golden hour`,
+        `04.00-08.00 | Project ${editingBulkIdx + 1} hero character closeup with dramatic rim light`,
+      ].join('\n');
+      updateBiPromptCount();
+    });
+  }
+  if (biCharFile) {
+    biCharFile.addEventListener('change', (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        bulkProjectsState[editingBulkIdx].charImageBase64 = r.result;
+        if (biCharThumb) { biCharThumb.src = r.result; biCharThumb.style.display = 'block'; }
+      };
+      r.readAsDataURL(f);
+    });
+  }
+  if (biStyleFile) {
+    biStyleFile.addEventListener('change', (e) => {
+      const f = (e.target.files || [])[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = () => {
+        bulkProjectsState[editingBulkIdx].styleImageBase64 = r.result;
+        if (biStyleThumb) { biStyleThumb.src = r.result; biStyleThumb.style.display = 'block'; }
+      };
+      r.readAsDataURL(f);
+    });
+  }
+  if (biCharClear) biCharClear.addEventListener('click', () => { bulkProjectsState[editingBulkIdx].charImageBase64 = ''; if (biCharThumb) biCharThumb.style.display = 'none'; });
+  if (biStyleClear) biStyleClear.addEventListener('click', () => { bulkProjectsState[editingBulkIdx].styleImageBase64 = ''; if (biStyleThumb) biStyleThumb.style.display = 'none'; });
+  if (closeBulkInputModalBtn && bulkInputModal) closeBulkInputModalBtn.addEventListener('click', () => bulkInputModal.classList.remove('open'));
+  if (biCancelBtn && bulkInputModal) biCancelBtn.addEventListener('click', () => bulkInputModal.classList.remove('open'));
+  if (biSaveBtn) {
+    biSaveBtn.addEventListener('click', () => {
+      const ps = bulkProjectsState[editingBulkIdx];
+      ps.projectName = (biProjectName?.value || `Bulk_Project_0${editingBulkIdx + 1}`).trim();
+      ps.engine = biEngine?.value || 'gemini-canvas';
+      ps.aspectRatio = biAspect?.value || '16:9';
+      ps.charDesc = (biCharDesc?.value || '').trim();
+      ps.styleDesc = (biStyleDesc?.value || '').trim();
+      ps.negPrompt = (biNegPrompt?.value || '').trim();
+      ps.promptsText = (biPrompts?.value || '').trim();
+      ps.items = parseBulkItems(editingBulkIdx, ps.promptsText, ps.aspectRatio);
+      ps.status = 'standby';
+      if (bulkInputModal) bulkInputModal.classList.remove('open');
+      renderBulkWorkspace();
+      showToast(`Saved ${ps.items.length} shot(s) for ${ps.projectName}`);
+    });
+  }
+
+  async function downloadBulkProjectZip(idx) {
+    const ps = bulkProjectsState[idx];
+    const ready = ps.items.filter(it => it.status === 'done' && it.dataUrl);
+    if (!ready.length) {
+      showToast(`No ready images yet in Project ${idx + 1}`, 'error');
+      return;
+    }
+    if (window.RenderXZip && typeof window.RenderXZip.exportAll === 'function') {
+      await window.RenderXZip.exportAll(ready, `${ps.projectName}.zip`);
+      showToast(`Downloaded ${ps.projectName}.zip`);
+    } else if (typeof JSZip !== 'undefined') {
+      const zip = new JSZip();
+      ready.forEach(it => zip.file(it.filename, it.dataUrl.split(',')[1], { base64: true }));
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${ps.projectName}.zip`;
+      a.click();
+    }
+  }
+
+  function handleBulkShotUpdated(msg) {
+    const ps = bulkProjectsState[msg.projectIndex];
+    if (!ps) return;
+    const item = ps.items.find(it => it.index === msg.index);
+    if (item) {
+      item.status = msg.status;
+      if (msg.dataUrl) item.dataUrl = msg.dataUrl;
+      if (msg.filename) item.filename = msg.filename;
+      if (msg.error) item.error = msg.error;
+      if (msg.status === 'retrying') item.retryProfile = msg.profileLabel;
+    }
+    if (msg.outputDir) ps.outputDir = msg.outputDir;
+    renderBulkWorkspace();
+  }
+
+  function updateBulkProjectStatus(data) {
+    const ps = bulkProjectsState[data.projectIndex];
+    if (!ps) return;
+    ps.status = data.status;
+    if (data.activeProfile) ps.activeProfile = data.activeProfile;
+    if (data.outputDir) ps.outputDir = data.outputDir;
+    renderBulkWorkspace();
+  }
+
+  document.querySelectorAll('.bulk-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      bulkFilterMode = btn.dataset.filter || 'all';
+      document.querySelectorAll('.bulk-tab-btn').forEach(b => {
+        const active = b === btn;
+        b.style.borderColor = active ? '#38BDF8' : '#1E293B';
+        b.style.background = active ? 'rgba(56,189,248,0.18)' : '#0A0F1D';
+        b.style.color = active ? '#E0F2FE' : '#94A3B8';
+      });
+      renderBulkWorkspace();
+    });
+  });
 
   async function loadAndRenderBulkPairs() {
     const res = await fetch('/api/bulk/pairs');
     const data = await res.json();
     bulkPairsCache = data.pairs || [];
-    if (bulkUnlockedBadge) {
-      bulkUnlockedBadge.textContent = `${data.unlockedProjects || 0} / 4 Projects Unlocked`;
-    }
     if (!data.canEnableBulk) {
       showToast('Bulk Mode requires at least 2 logged-in profiles (e.g. P1 + P2) with a backup!', 'error');
       showFailoverAlert('⚠️ Bulk Mode locked: Login at least one full pair (P1 + P2) so every project has a backup profile.', 'acc2');
@@ -1252,109 +1662,49 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       return false;
     }
-    if (bulkProjectsGrid) {
-      bulkProjectsGrid.innerHTML = '';
-      bulkPairsCache.forEach(pair => {
-        const i = pair.projectIndex;
-        const card = document.createElement('div');
-        card.id = `bulk-proj-${i}`;
-        card.style.cssText = `background:#0A0F1D; border:1px solid ${pair.unlocked ? '#1E293B' : '#334155'}; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; opacity:${pair.unlocked ? '1' : '0.55'};`;
-        const statusHtml = pair.unlocked
-          ? `<span id="bulk-status-${i}" style="padding:2px 7px; border-radius:4px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#6EE7B7; font-size:9.5px; font-weight:800;">🔓 Ready (${pair.primaryLabel} → ${pair.backupLabel})</span>`
-          : `<span id="bulk-status-${i}" style="padding:2px 7px; border-radius:4px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#FCA5A5; font-size:9.5px; font-weight:800;">🔒 Locked: Login ${pair.primaryLabel} + ${pair.backupLabel}</span>`;
-        card.innerHTML = `
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
-            <strong style="font-size:12px; color:#F8FAFC;">Project ${i + 1} (${pair.primaryLabel} / ${pair.backupLabel})</strong>
-            ${statusHtml}
-          </div>
-          <div style="display:grid; grid-template-columns:1.2fr 1fr 0.8fr; gap:6px;">
-            <input type="text" id="bulk-name-${i}" value="Bulk_Project_0${i + 1}" placeholder="Project Name" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
-            <select id="bulk-engine-${i}" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 6px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
-              <option value="gemini-canvas">💎 Gemini Canvas</option>
-              <option value="google-flow">🌊 Google Flow</option>
-            </select>
-            <select id="bulk-aspect-${i}" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 6px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-              <option value="1:1">1:1</option>
-            </select>
-          </div>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-            <input type="text" id="bulk-char-${i}" placeholder="Character consistency..." ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
-            <input type="text" id="bulk-style-${i}" placeholder="Style consistency..." ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
-          </div>
-          <textarea id="bulk-prompts-${i}" rows="4" placeholder="Enter prompts (one per line, optional 00.00-04.00 | prompt)..." ${pair.unlocked ? '' : 'disabled'} style="padding:6px 8px; font-size:10.5px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC; resize:vertical;"></textarea>
-        `;
-        bulkProjectsGrid.appendChild(card);
-      });
-    }
+    renderBulkWorkspace();
     return true;
   }
 
-  function updateBulkProjectStatus(data) {
-    const badge = document.getElementById(`bulk-status-${data.projectIndex}`);
-    if (!badge) return;
-    if (data.status === 'running') {
-      badge.textContent = `⏳ Running on ${data.activeProfile}`;
-      badge.style.color = '#7DD3FC';
-    } else if (data.status === 'failover') {
-      badge.textContent = `🔄 Switching to backup ${data.activeProfile}...`;
-      badge.style.color = '#FCD34D';
-    } else if (data.status === 'done' || data.status === 'partial') {
-      badge.textContent = `✅ Done (${data.completedCount}/${data.total})`;
-      badge.style.color = '#6EE7B7';
-    }
-  }
-
+  if (btnSingleMode) btnSingleMode.addEventListener('click', () => setBulkView(false));
   if (btnBulkMode) {
     btnBulkMode.addEventListener('click', async () => {
       const ok = await loadAndRenderBulkPairs();
       if (ok) setBulkView(true);
     });
   }
-  if (btnBackSingle) {
-    btnBackSingle.addEventListener('click', () => setBulkView(false));
-  }
+  if (btnBackSingle) btnBackSingle.addEventListener('click', () => setBulkView(false));
   if (btnStartBulk) {
     btnStartBulk.addEventListener('click', async () => {
       const projects = [];
-      let baseIdx = 1;
       bulkPairsCache.forEach(pair => {
         if (!pair.unlocked) return;
-        const i = pair.projectIndex;
-        const raw = (document.getElementById(`bulk-prompts-${i}`)?.value || '').trim();
-        if (!raw) return;
-        const aspect = document.getElementById(`bulk-aspect-${i}`)?.value || '16:9';
-        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-        const items = lines.map((line, k) => {
-          const parsed = window.RenderXParser ? window.RenderXParser.parseLine(line, k + 1) : null;
-          return {
-            index: baseIdx++,
-            rawPrompt: parsed ? parsed.prompt : line,
-            prompt: parsed ? parsed.prompt : line,
-            timestamp: parsed ? parsed.timestamp : `00.00-04.00`,
-            cleanTimestamp: parsed ? parsed.cleanTimestamp : `shot_${k + 1}`,
-            aspectRatio: aspect,
-            status: 'pending',
-          };
-        });
+        const ps = bulkProjectsState[pair.projectIndex];
+        if (!ps.items.length) return;
+        ps.items.forEach(it => { it.status = 'pending'; it.dataUrl = ''; it.error = ''; });
+        ps.status = 'running';
+        ps.activeProfile = pair.primaryLabel;
         projects.push({
-          projectIndex: i,
-          projectName: document.getElementById(`bulk-name-${i}`)?.value || `Bulk_Project_0${i + 1}`,
-          engine: document.getElementById(`bulk-engine-${i}`)?.value || 'gemini-canvas',
+          projectIndex: pair.projectIndex,
+          projectName: ps.projectName,
+          engine: ps.engine,
           subMode: 'image',
           useFlowAgent: true,
-          charDesc: document.getElementById(`bulk-char-${i}`)?.value || '',
-          styleDesc: document.getElementById(`bulk-style-${i}`)?.value || '',
-          items,
+          negPrompt: ps.negPrompt,
+          charDesc: ps.charDesc,
+          styleDesc: ps.styleDesc,
+          charImageBase64: ps.charImageBase64,
+          styleImageBase64: ps.styleImageBase64,
+          items: ps.items.map(it => ({ ...it })),
         });
       });
       if (!projects.length) {
-        showToast('Enter prompts in at least 1 unlocked Bulk Project!', 'error');
+        showToast('Configure prompts in at least 1 unlocked Project box first!', 'error');
         return;
       }
+      renderBulkWorkspace();
       btnStartBulk.disabled = true;
-      btnStartBulk.textContent = '⏳ Running Bulk...';
+      btnStartBulk.textContent = '⏳ Running All At Once...';
       try {
         const res = await fetch('/api/bulk/start', {
           method: 'POST',
@@ -1363,10 +1713,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || data.error || 'Failed to start bulk');
-        showToast(`Started ${data.projectsStarted} Bulk project(s) with paired backup!`);
+        showToast(`Started ${data.projectsStarted} Bulk project(s) simultaneously!`);
       } catch (err) {
         btnStartBulk.disabled = false;
-        btnStartBulk.textContent = '⚡ Start Bulk Projects';
+        btnStartBulk.textContent = '⚡ Run All Projects';
         showToast(err.message, 'error');
       }
     });
