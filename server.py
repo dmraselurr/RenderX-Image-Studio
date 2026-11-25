@@ -1792,6 +1792,11 @@ async def serve_root():
     return FileResponse(BASE_DIR / "dashboard.html")
 
 
+@app.get("/custom-canvas")
+async def serve_custom_canvas():
+    return FileResponse(BASE_DIR / "renderx_custom_canvas.html")
+
+
 @app.get("/favicon.ico")
 async def serve_favicon():
     ico = BASE_DIR / "icons" / "ris_logo.ico"
@@ -1863,8 +1868,8 @@ async def api_get_canvas_url():
 @app.post("/api/canvas-url")
 async def api_set_canvas_url(req: CanvasUrlReq):
     url = (req.canvas_url or "").strip()
-    if url and not url.startswith("https://gemini.google.com/"):
-        raise HTTPException(400, "Please enter a valid https://gemini.google.com/... Canvas share URL")
+    if url and not (url.startswith("https://gemini.google.com/") or url.startswith("https://share.gemini.google/")):
+        raise HTTPException(400, "Please enter a valid gemini.google.com or share.gemini.google Canvas URL")
     saved = set_canvas_url(url)
     return {"success": True, "canvas_url": saved, "is_custom": saved != GEMINI_SHARE_URL}
 
@@ -2070,6 +2075,62 @@ async def api_reset_profile(pid: str):
     return {"success": True}
 
 
+MAX_CONCURRENT_PROFILES = 4
+_CHROME_CACHE_SUBDIRS = (
+    Path("Default") / "Cache",
+    Path("Default") / "Code Cache",
+    Path("Default") / "GPUCache",
+    Path("Default") / "DawnGraphiteCache",
+    Path("Default") / "DawnWebGPUCache",
+    Path("Default") / "Service Worker" / "CacheStorage",
+    Path("Default") / "Service Worker" / "ScriptCache",
+    Path("GrShaderCache"),
+    Path("ShaderCache"),
+    Path("GraphiteDawnCache"),
+)
+
+
+def _purge_chrome_profile_caches() -> int:
+    """Delete accumulated Chrome caches across profiles while preserving Google login cookies/sessions."""
+    removed = 0
+    if not PROFILES_DIR.exists():
+        return 0
+    for prof_dir in PROFILES_DIR.iterdir():
+        if not prof_dir.is_dir():
+            continue
+        for rel in _CHROME_CACHE_SUBDIRS:
+            target = prof_dir / rel
+            if target.exists():
+                try:
+                    shutil.rmtree(target, ignore_errors=True)
+                    removed += 1
+                except Exception:
+                    pass
+    return removed
+
+
+async def _close_worker_context(pid: str):
+    ctx = state.worker_contexts.pop(pid, None)
+    if ctx:
+        try:
+            await ctx.close()
+        except Exception:
+            pass
+    p_path = PROFILES_DIR / pid
+    if p_path.exists():
+        await asyncio.to_thread(kill_stale_chrome, p_path)
+
+
+async def _cleanup_all_workers_and_cache():
+    for pid in list(state.worker_contexts.keys()):
+        await _close_worker_context(pid)
+    cleared = await asyncio.to_thread(_purge_chrome_profile_caches)
+    await broadcast_ws({
+        "type": "DIAGNOSTIC_LOG",
+        "text": f"🧹 Freed Chrome RAM & cleared {cleared} cache folder(s) — device fast & smooth!"
+    })
+
+
 class BatchStartReq(BaseModel):
     items: List[Dict[str, Any]]
     engine: str = "gemini-canvas"
@@ -2078,6 +2139,7 @@ class BatchStartReq(BaseModel):
     createNewProject: bool = True
     useFlowAgent: bool = True
     isRetry: bool = False
+    maxConcurrentProfiles: int = MAX_CONCURRENT_PROFILES
     negPrompt: Optional[str] = None
     charDesc: Optional[str] = None
     styleDesc: Optional[str] = None
@@ -2208,32 +2270,46 @@ async def api_batch_start(req: BatchStartReq):
         "styleImageBase64": req.styleImageBase64,
     }
 
+    max_conc = max(1, min(MAX_CONCURRENT_PROFILES, int(req.maxConcurrentProfiles or MAX_CONCURRENT_PROFILES)))
+
     async def orchestrate():
+        sem = asyncio.Semaphore(max_conc)
+
+        async def run_limited(pid: str, coro):
+            async with sem:
+                try:
+                    await coro
+                finally:
+                    await _close_worker_context(pid)
+
         await broadcast_ws({
             "type": "DIAGNOSTIC_LOG",
-            "text": f"Cluster dispatching {len(state.current_items)} shots across {len(active_profiles)} Chrome profile(s) ({req.engine})..."
+            "text": f"Cluster dispatching {len(state.current_items)} shots across {len(active_profiles)} Chrome profile(s) (max {max_conc} open at once, {req.engine})..."
         })
-        tasks = []
-        for p in active_profiles:
-            chunk = buckets[p["id"]]
-            if not chunk:
-                continue
-            if req.engine == "google-flow":
-                tasks.append(run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir, options))
-            else:
-                tasks.append(run_canvas_profile_worker(p, chunk, item_map, batch_dir, options))
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        state.is_running = False
-        completed = sum(1 for x in state.current_items if x.get("status") == "done")
-        await broadcast_ws({
-            "type": "QUEUE_FINISHED",
-            "completedCount": completed,
-            "total": len(state.current_items),
-            "outputDir": str(batch_dir),
-            "stopped": state.should_stop,
-        })
+        try:
+            tasks = []
+            for p in active_profiles:
+                chunk = buckets[p["id"]]
+                if not chunk:
+                    continue
+                if req.engine == "google-flow":
+                    coro = run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir, options)
+                else:
+                    coro = run_canvas_profile_worker(p, chunk, item_map, batch_dir, options)
+                tasks.append(run_limited(p["id"], coro))
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            await _cleanup_all_workers_and_cache()
+            state.is_running = False
+            completed = sum(1 for x in state.current_items if x.get("status") == "done")
+            await broadcast_ws({
+                "type": "QUEUE_FINISHED",
+                "completedCount": completed,
+                "total": len(state.current_items),
+                "outputDir": str(batch_dir),
+                "stopped": state.should_stop,
+            })
 
     asyncio.create_task(orchestrate())
     return {"success": True, "profilesUsed": len(active_profiles), "outputDir": str(batch_dir)}
