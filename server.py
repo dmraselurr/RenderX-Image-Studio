@@ -2350,6 +2350,116 @@ async def api_batch_start(req: BatchStartReq):
         "styleImageBase64": req.styleImageBase64,
     }
 
+BULK_PAIRS: List[Tuple[str, str]] = [
+    ("acc1", "acc2"),
+    ("acc3", "acc4"),
+    ("acc5", "acc6"),
+    ("acc7", "acc8"),
+]
+
+
+def profile_short_label(pid: str) -> str:
+    return f"P{pid[3:]}" if pid.startswith("acc") and pid[3:].isdigit() else pid
+
+
+def _run_engine_for_profile(
+    prof: Dict[str, Any],
+    items: List[Dict[str, Any]],
+    item_map: Dict[int, Dict[str, Any]],
+    engine: str,
+    sub_mode: str,
+    batch_dir: Path,
+    options: Dict[str, Any],
+):
+    if engine == "google-flow":
+        return run_flow_profile_worker(prof, items, item_map, sub_mode, batch_dir, options)
+    return run_canvas_profile_worker(prof, items, item_map, batch_dir, options)
+
+
+async def _failover_or_notify(
+    failed_items: List[Dict[str, Any]],
+    tried_pids: List[str],
+    all_profiles: List[Dict[str, Any]],
+    item_map: Dict[int, Dict[str, Any]],
+    engine: str,
+    sub_mode: str,
+    batch_dir: Path,
+    options: Dict[str, Any],
+    allowed_pids: Optional[List[str]] = None,
+    project_label: str = "Studio",
+):
+    """5s pause then auto-switch to next logged-in profile; if none logged in, emit PROFILE_SETUP_REQUIRED."""
+    if not failed_items or state.should_stop:
+        return
+
+    prof_by_id = {p["id"]: p for p in all_profiles}
+    ordered_ids = allowed_pids if allowed_pids is not None else [p["id"] for p in all_profiles]
+
+    next_logged = next(
+        (prof_by_id[pid] for pid in ordered_ids if pid in prof_by_id and pid not in tried_pids and prof_by_id[pid].get("logged_in")),
+        None,
+    )
+    if not next_logged:
+        next_unlogged_id = next((pid for pid in ordered_ids if pid not in tried_pids), None)
+        if next_unlogged_id:
+            nl = profile_short_label(next_unlogged_id)
+            prev_lbl = profile_short_label(tried_pids[-1]) if tried_pids else "Primary"
+            msg = f"{project_label}: {prev_lbl} hit limit/error and {nl} is not logged in. Please login {nl} to continue!"
+            await broadcast_ws({
+                "type": "PROFILE_SETUP_REQUIRED",
+                "projectLabel": project_label,
+                "failedProfile": prev_lbl,
+                "nextProfileId": next_unlogged_id,
+                "nextLabel": nl,
+                "message": msg,
+            })
+            await broadcast_ws({"type": "DIAGNOSTIC_LOG", "text": f"⚠️ {msg}"})
+        return
+
+    next_pid = next_logged["id"]
+    next_lbl = profile_short_label(next_pid)
+    prev_lbl = profile_short_label(tried_pids[-1]) if tried_pids else "Primary"
+    await broadcast_ws({
+        "type": "FAILOVER_SWITCH",
+        "projectLabel": project_label,
+        "fromProfile": prev_lbl,
+        "toProfile": next_lbl,
+        "message": f"🔄 {project_label}: {prev_lbl} limit/error — waiting 5s & switching to {next_lbl}...",
+    })
+    await broadcast_ws({
+        "type": "DIAGNOSTIC_LOG",
+        "text": f"🔄 {project_label}: {prev_lbl} hit limit/error — pausing 5s then switching to {next_lbl} for {len(failed_items)} remaining shot(s)..."
+    })
+    await asyncio.sleep(5.0)
+    if state.should_stop:
+        return
+
+    for it in failed_items:
+        it["status"] = "pending"
+        it["error"] = None
+        await broadcast_ws({"type": "SHOT_UPDATED", "index": it["index"], "status": "pending", "profile": next_lbl})
+
+    try:
+        await _run_engine_for_profile(next_logged, failed_items, item_map, engine, sub_mode, batch_dir, options)
+    finally:
+        await _close_worker_context(next_pid)
+
+    still_failed = [it for it in failed_items if it.get("status") != "done"]
+    if still_failed and not state.should_stop:
+        await _failover_or_notify(
+            still_failed,
+            tried_pids + [next_pid],
+            all_profiles,
+            item_map,
+            engine,
+            sub_mode,
+            batch_dir,
+            options,
+            allowed_pids=allowed_pids,
+            project_label=project_label,
+        )
+
+
     max_conc = max(1, min(MAX_CONCURRENT_PROFILES, int(req.maxConcurrentProfiles or MAX_CONCURRENT_PROFILES)))
 
     async def orchestrate():
@@ -2368,17 +2478,32 @@ async def api_batch_start(req: BatchStartReq):
         })
         try:
             tasks = []
+            used_pids = []
             for p in active_profiles:
                 chunk = buckets[p["id"]]
                 if not chunk:
                     continue
-                if req.engine == "google-flow":
-                    coro = run_flow_profile_worker(p, chunk, item_map, req.subMode, batch_dir, options)
-                else:
-                    coro = run_canvas_profile_worker(p, chunk, item_map, batch_dir, options)
+                used_pids.append(p["id"])
+                coro = _run_engine_for_profile(p, chunk, item_map, req.engine, req.subMode, batch_dir, options)
                 tasks.append(run_limited(p["id"], coro))
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Never-stop auto-failover: if any shots failed, wait 5s & switch to next logged-in profile (or notify)
+            failed_items = [it for it in state.current_items if it.get("status") != "done"]
+            if failed_items and not state.should_stop:
+                all_profs = load_profiles(refresh_disk=True)
+                await _failover_or_notify(
+                    failed_items,
+                    used_pids,
+                    all_profs,
+                    item_map,
+                    req.engine,
+                    req.subMode,
+                    batch_dir,
+                    options,
+                    project_label="Single Studio",
+                )
         finally:
             await _cleanup_all_workers_and_cache()
             state.is_running = False
@@ -2393,6 +2518,164 @@ async def api_batch_start(req: BatchStartReq):
 
     asyncio.create_task(orchestrate())
     return {"success": True, "profilesUsed": len(active_profiles), "outputDir": str(batch_dir)}
+
+
+class BulkProjectReq(BaseModel):
+    projectIndex: int
+    projectName: str = "Bulk_Project"
+    items: List[Dict[str, Any]]
+    engine: str = "gemini-canvas"
+    subMode: str = "image"
+    useFlowAgent: bool = True
+    negPrompt: Optional[str] = None
+    charDesc: Optional[str] = None
+    styleDesc: Optional[str] = None
+    charImageBase64: Optional[str] = None
+    styleImageBase64: Optional[str] = None
+
+
+class BulkStartReq(BaseModel):
+    projects: List[BulkProjectReq]
+
+
+@app.get("/api/bulk/pairs")
+async def api_bulk_pairs():
+    profiles = load_profiles(refresh_disk=True)
+    prof_map = {p["id"]: p for p in profiles}
+    pairs_info = []
+    unlocked_count = 0
+    for idx, (primary_id, backup_id) in enumerate(BULK_PAIRS):
+        p1 = prof_map.get(primary_id, {})
+        p2 = prof_map.get(backup_id, {})
+        p1_ok = bool(p1.get("logged_in"))
+        p2_ok = bool(p2.get("logged_in"))
+        unlocked = p1_ok and p2_ok
+        if unlocked:
+            unlocked_count += 1
+        pairs_info.append({
+            "projectIndex": idx,
+            "primaryId": primary_id,
+            "backupId": backup_id,
+            "primaryLabel": profile_short_label(primary_id),
+            "backupLabel": profile_short_label(backup_id),
+            "primaryLoggedIn": p1_ok,
+            "backupLoggedIn": p2_ok,
+            "unlocked": unlocked,
+        })
+    return {
+        "success": True,
+        "canEnableBulk": unlocked_count >= 1,
+        "unlockedProjects": unlocked_count,
+        "pairs": pairs_info,
+    }
+
+
+@app.post("/api/bulk/start")
+async def api_bulk_start(req: BulkStartReq):
+    if state.is_running:
+        return JSONResponse(status_code=409, content={"success": False, "error": "A batch is already running"})
+
+    profiles = load_profiles(refresh_disk=True)
+    prof_map = {p["id"]: p for p in profiles}
+
+    valid_projects: List[Tuple[BulkProjectReq, str, str]] = []
+    for proj in req.projects:
+        if not (0 <= proj.projectIndex < len(BULK_PAIRS)):
+            raise HTTPException(400, f"Invalid projectIndex {proj.projectIndex}")
+        if not proj.items:
+            continue
+        p_id, b_id = BULK_PAIRS[proj.projectIndex]
+        if not prof_map.get(p_id, {}).get("logged_in") or not prof_map.get(b_id, {}).get("logged_in"):
+            p_lbl, b_lbl = profile_short_label(p_id), profile_short_label(b_id)
+            raise HTTPException(
+                400,
+                f"Project {proj.projectIndex + 1} requires BOTH {p_lbl} and {b_lbl} to be logged in (backup required)."
+            )
+        valid_projects.append((proj, p_id, b_id))
+
+    if not valid_projects:
+        raise HTTPException(400, "No unlocked Bulk projects with prompts to run.")
+
+    state.is_running = True
+    state.should_stop = False
+
+    async def run_bulk_project(proj: BulkProjectReq, p_id: str, b_id: str, sem: asyncio.Semaphore):
+        raw_pn = re.sub(r"[^a-zA-Z0-9_-]+", "_", (proj.projectName or f"Bulk_P{proj.projectIndex + 1}").strip()).strip("_") or f"Bulk_P{proj.projectIndex + 1}"
+        batch_dir = OUTPUTS_DIR / f"{raw_pn}_{time.strftime('%Y%m%d_%H%M%S')}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        item_map = {it["index"]: it for it in proj.items}
+        options = {
+            "projectName": proj.projectName,
+            "createNewProject": True,
+            "useFlowAgent": proj.useFlowAgent,
+            "negPrompt": proj.negPrompt,
+            "charDesc": proj.charDesc,
+            "styleDesc": proj.styleDesc,
+            "charImageBase64": proj.charImageBase64,
+            "styleImageBase64": proj.styleImageBase64,
+        }
+        p_lbl = profile_short_label(p_id)
+        await broadcast_ws({
+            "type": "BULK_PROJECT_STATUS",
+            "projectIndex": proj.projectIndex,
+            "status": "running",
+            "activeProfile": p_lbl,
+            "outputDir": str(batch_dir),
+        })
+        async with sem:
+            try:
+                await _run_engine_for_profile(prof_map[p_id], proj.items, item_map, proj.engine, proj.subMode, batch_dir, options)
+            finally:
+                await _close_worker_context(p_id)
+
+            # Strict paired failover: 1->2, 3->4, 5->6, 7->8 (NEVER crosses pairs)
+            failed_items = [it for it in proj.items if it.get("status") != "done"]
+            if failed_items and not state.should_stop:
+                await broadcast_ws({
+                    "type": "BULK_PROJECT_STATUS",
+                    "projectIndex": proj.projectIndex,
+                    "status": "failover",
+                    "activeProfile": profile_short_label(b_id),
+                })
+                await _failover_or_notify(
+                    failed_items,
+                    [p_id],
+                    profiles,
+                    item_map,
+                    proj.engine,
+                    proj.subMode,
+                    batch_dir,
+                    options,
+                    allowed_pids=[p_id, b_id],
+                    project_label=f"Bulk Project {proj.projectIndex + 1}",
+                )
+
+        done_cnt = sum(1 for it in proj.items if it.get("status") == "done")
+        await broadcast_ws({
+            "type": "BULK_PROJECT_STATUS",
+            "projectIndex": proj.projectIndex,
+            "status": "done" if done_cnt == len(proj.items) else "partial",
+            "completedCount": done_cnt,
+            "total": len(proj.items),
+            "outputDir": str(batch_dir),
+        })
+
+    async def orchestrate_bulk():
+        sem = asyncio.Semaphore(MAX_CONCURRENT_PROFILES)
+        try:
+            await asyncio.gather(*[
+                run_bulk_project(proj, p_id, b_id, sem) for proj, p_id, b_id in valid_projects
+            ], return_exceptions=True)
+        finally:
+            await _cleanup_all_workers_and_cache()
+            state.is_running = False
+            await broadcast_ws({
+                "type": "BULK_FINISHED",
+                "stopped": state.should_stop,
+            })
+
+    asyncio.create_task(orchestrate_bulk())
+    return {"success": True, "projectsStarted": len(valid_projects)}
 
 
 @app.post("/api/batch/stop")
