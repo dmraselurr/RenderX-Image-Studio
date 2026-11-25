@@ -34,9 +34,11 @@
         <span id="sessionStatusText">Gemini Canvas (Desktop Cluster)</span>
       </div>
 
-      <button type="button" class="btn-dock-split" id="btnBulkMode" title="Open 4-Project Bulk Generation Studio (Requires Paired Logged-In Profiles)" style="border-color:rgba(168,85,247,0.45); color:#E9D5FF;">
-        <span>📦 Bulk Generation</span>
-      </button>
+      <!-- Two-Bar Mode Switcher: Single Project (Default) vs Bulk Projects -->
+      <div id="studioModeSwitchBar" style="display:inline-flex; align-items:center; background:#050811; border:1px solid #1E293B; border-radius:8px; padding:2px; gap:3px;">
+        <button type="button" id="btnSingleMode" class="btn-dock-split active" style="padding:4px 10px; border:none; border-radius:6px; background:rgba(56,189,248,0.18); color:#E0F2FE; font-weight:800;">✨ Single Project</button>
+        <button type="button" id="btnBulkMode" class="btn-dock-split" title="Open 4-Project Bulk Generation Studio (Requires Paired Logged-In Profiles)" style="padding:4px 10px; border:none; border-radius:6px; background:transparent; color:#C4B5FD; font-weight:700;">📦 Bulk Projects</button>
+      </div>
 
       <button type="button" class="btn-dock-split" id="btnSidePanelInfo" title="Open Generated Outputs Folder on Disk">
         <span>📂 Open Outputs</span>
@@ -444,23 +446,113 @@
 
     </main>
 
-    <!-- ================= Bulk Generation Workspace (4 Paired Projects) ================= -->
+    <!-- ================= Bulk Generation Workspace (4 Paired Simultaneous Projects) ================= -->
     <section id="bulkWorkspace" style="display:none; flex:1; flex-direction:column; min-width:0; overflow:hidden; background:#05070B;">
-      <div style="padding:10px 16px; background:#07090E; border-bottom:1px solid #1E293B; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <!-- Row 1: Summary, Project Filter Tabs & Run All Controls -->
+      <div style="padding:9px 16px; background:#07090E; border-bottom:1px solid #1E293B; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <span style="font-size:12px; font-weight:800; color:#F8FAFC; letter-spacing:0.5px;">📦 BULK GENERATION STUDIO</span>
-          <span id="bulkUnlockedBadge" style="padding:3px 8px; border-radius:4px; background:rgba(16,185,129,0.14); border:1px solid rgba(16,185,129,0.4); color:#6EE7B7; font-size:10px; font-weight:800;">0 / 4 Projects Unlocked</span>
-          <span style="font-size:10px; color:#94A3B8;">Paired Failover: P1→P2 • P3→P4 • P5→P6 • P7→P8 (Always keeps backup)</span>
+          <span id="bulkSummaryText" style="font-size:11px; font-weight:700; color:#CBD5E1;">Active Projects: 0 | Total: 0 / 0 Ready</span>
+          <div id="bulkFilterTabs" style="display:flex; align-items:center; gap:5px; flex-wrap:wrap;">
+            <button type="button" class="bulk-tab-btn active" data-filter="all" style="padding:4px 10px; border-radius:6px; border:1px solid #38BDF8; background:rgba(56,189,248,0.18); color:#E0F2FE; font-size:10px; font-weight:800; cursor:pointer;">All 4 Projects</button>
+            <button type="button" class="bulk-tab-btn" data-filter="0" style="padding:4px 9px; border-radius:6px; border:1px solid #1E293B; background:#0A0F1D; color:#94A3B8; font-size:10px; font-weight:700; cursor:pointer;">Project 1 (P1→P2)</button>
+            <button type="button" class="bulk-tab-btn" data-filter="1" style="padding:4px 9px; border-radius:6px; border:1px solid #1E293B; background:#0A0F1D; color:#94A3B8; font-size:10px; font-weight:700; cursor:pointer;">Project 2 (P3→P4)</button>
+            <button type="button" class="bulk-tab-btn" data-filter="2" style="padding:4px 9px; border-radius:6px; border:1px solid #1E293B; background:#0A0F1D; color:#94A3B8; font-size:10px; font-weight:700; cursor:pointer;">Project 3 (P5→P6)</button>
+            <button type="button" class="bulk-tab-btn" data-filter="3" style="padding:4px 9px; border-radius:6px; border:1px solid #1E293B; background:#0A0F1D; color:#94A3B8; font-size:10px; font-weight:700; cursor:pointer;">Project 4 (P7→P8)</button>
+          </div>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
-          <button type="button" id="btnBackSingle" class="btn-dock-split">⬅ Single Generation</button>
-          <button type="button" id="btnStartBulk" style="padding:6px 14px; border-radius:6px; border:none; background:linear-gradient(135deg,#5B5BD6,#7C3AED); color:#fff; font-weight:800; font-size:11px; cursor:pointer;">⚡ Start Bulk Projects</button>
-          <button type="button" id="btnStopBulk" style="padding:6px 10px; border-radius:6px; border:1px solid rgba(239,68,68,0.5); background:rgba(239,68,68,0.12); color:#FCA5A5; font-weight:700; font-size:10px; cursor:pointer;">■ Stop</button>
+          <button type="button" id="btnBackSingle" class="btn-dock-split">⬅ Single Studio</button>
+          <button type="button" id="btnStartBulk" style="padding:6px 14px; border-radius:6px; border:none; background:linear-gradient(135deg,#5B5BD6,#7C3AED); color:#fff; font-weight:800; font-size:11px; cursor:pointer; box-shadow:0 0 14px rgba(91,91,214,0.4);">⚡ Run All Projects</button>
+          <button type="button" id="btnStopBulk" style="padding:6px 11px; border-radius:6px; border:1px solid rgba(239,68,68,0.5); background:rgba(239,68,68,0.16); color:#FCA5A5; font-weight:800; font-size:10px; cursor:pointer;">■ Stop</button>
         </div>
       </div>
+
+      <!-- Row 2: 4 Compact Click-to-Configure Project Boxes -->
+      <div id="bulkSetupBoxesBar" style="padding:8px 14px; background:#06080F; border-bottom:1px solid #1E293B; display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px;"></div>
+
+      <!-- Main 2x2 Live Monitoring & Thumbnail Grid (Matches Mockup Architecture) -->
       <div id="bulkProjectsGrid" style="flex:1; overflow-y:auto; padding:14px; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; align-content:start;"></div>
     </section>
 
+  </div>
+
+  <!-- Bulk Project Expanded Input Modal -->
+  <div class="modal-overlay" id="bulkInputModal">
+    <div class="modal-card" style="max-width:620px; width:94%;">
+      <div class="modal-card-header">
+        <h3 id="bulkModalTitle">Configure Project 1 (P1 → P2)</h3>
+        <button type="button" class="btn-modal-close" id="closeBulkInputModalBtn">✕</button>
+      </div>
+      <div style="padding:14px; display:flex; flex-direction:column; gap:10px; max-height:76vh; overflow-y:auto;">
+        <div style="display:grid; grid-template-columns:1.3fr 1fr 0.9fr; gap:8px;">
+          <div>
+            <label style="display:block; font-size:9.5px; color:#94A3B8; font-weight:700; margin-bottom:4px;">PROJECT NAME</label>
+            <input type="text" id="biProjectName" style="width:100%; padding:6px 8px; font-size:11px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC;">
+          </div>
+          <div>
+            <label style="display:block; font-size:9.5px; color:#94A3B8; font-weight:700; margin-bottom:4px;">AI ENGINE</label>
+            <select id="biEngine" style="width:100%; padding:6px 8px; font-size:11px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC;">
+              <option value="gemini-canvas">💎 Gemini Canvas</option>
+              <option value="google-flow">🌊 Google Flow</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:9.5px; color:#94A3B8; font-weight:700; margin-bottom:4px;">ASPECT RATIO</label>
+            <select id="biAspect" style="width:100%; padding:6px 8px; font-size:11px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC;">
+              <option value="16:9">16:9 Desktop</option>
+              <option value="9:16">9:16 Reels</option>
+              <option value="1:1">1:1 Square</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div style="background:#070B16; border:1px solid #1E293B; border-radius:8px; padding:8px;">
+            <label style="display:block; font-size:9.5px; color:#7DD3FC; font-weight:800; margin-bottom:5px;">👤 CHARACTER CONSISTENCY</label>
+            <input type="text" id="biCharDesc" placeholder="Character appearance..." style="width:100%; padding:5px 8px; font-size:10.5px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0; margin-bottom:6px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+              <label style="padding:4px 8px; border-radius:5px; border:1px solid #334155; background:#0F172A; color:#E2E8F0; font-size:9.5px; font-weight:700; cursor:pointer;">
+                📁 Ref Img <input type="file" id="biCharFile" accept="image/*" style="display:none;">
+              </label>
+              <img id="biCharThumb" src="" style="display:none; width:28px; height:28px; border-radius:4px; object-fit:cover; border:1px solid #38BDF8;">
+              <button type="button" id="biCharClear" style="padding:3px 6px; border-radius:4px; border:1px solid #334155; background:#0F172A; color:#94A3B8; font-size:9px; cursor:pointer;">Clear</button>
+            </div>
+          </div>
+          <div style="background:#070B16; border:1px solid #1E293B; border-radius:8px; padding:8px;">
+            <label style="display:block; font-size:9.5px; color:#C4B5FD; font-weight:800; margin-bottom:5px;">🎨 STYLE CONSISTENCY</label>
+            <input type="text" id="biStyleDesc" placeholder="Visual style &amp; lighting..." style="width:100%; padding:5px 8px; font-size:10.5px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0; margin-bottom:6px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+              <label style="padding:4px 8px; border-radius:5px; border:1px solid #334155; background:#0F172A; color:#E2E8F0; font-size:9.5px; font-weight:700; cursor:pointer;">
+                🎨 Style Ref <input type="file" id="biStyleFile" accept="image/*" style="display:none;">
+              </label>
+              <img id="biStyleThumb" src="" style="display:none; width:28px; height:28px; border-radius:4px; object-fit:cover; border:1px solid #A855F7;">
+              <button type="button" id="biStyleClear" style="padding:3px 6px; border-radius:4px; border:1px solid #334155; background:#0F172A; color:#94A3B8; font-size:9px; cursor:pointer;">Clear</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:9.5px; color:#FCA5A5; font-weight:800; margin-bottom:4px;">🚫 NEGATIVE PROMPTS (OPTIONAL)</label>
+          <input type="text" id="biNegPrompt" value="bad anatomy, extra fingers, blurry, watermark" style="width:100%; padding:5px 8px; font-size:10.5px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+        </div>
+
+        <div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+            <label style="font-size:9.5px; color:#7DD3FC; font-weight:800;">🎬 TIMELINE / BATCH PROMPTS (ONE PER LINE)</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <button type="button" id="biSampleBtn" style="padding:2px 7px; border-radius:4px; border:1px solid #334155; background:#0F172A; color:#CBD5E1; font-size:9.5px; cursor:pointer;">📋 Sample</button>
+              <span id="biPromptCount" style="font-size:10px; font-weight:800; color:#38BDF8;">0 shots</span>
+            </div>
+          </div>
+          <textarea id="biPrompts" rows="5" placeholder="00.00-04.00 | Astronaut standing on a red Mars cliff&#10;04.00-08.00 | Astronaut examining hologram inside dome" style="width:100%; padding:8px; font-size:11px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC; resize:vertical;"></textarea>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; padding-top:4px;">
+          <button type="button" id="biCancelBtn" class="btn-subtle">Cancel</button>
+          <button type="button" id="biSaveBtn" style="padding:7px 16px; border-radius:6px; border:none; background:linear-gradient(135deg,#10B981,#059669); color:#fff; font-weight:800; font-size:11px; cursor:pointer;">✅ Save &amp; Ready Project</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Lightbox Modal (Zoom, Playback & Download) -->
