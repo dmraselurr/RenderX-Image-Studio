@@ -903,6 +903,19 @@ document.addEventListener('DOMContentLoaded', () => {
       updateOverallProgress();
     } else if (msg.type === 'DIAGNOSTIC_LOG') {
       updateDiagnosticLine(msg.text || '', Boolean(msg.isError));
+    } else if (msg.type === 'FAILOVER_SWITCH') {
+      showFailoverAlert(msg.message, null);
+      updateDiagnosticLine(msg.message || '', false);
+      showToast(msg.message);
+    } else if (msg.type === 'PROFILE_SETUP_REQUIRED') {
+      showFailoverAlert(msg.message, msg.nextProfileId || null);
+      updateDiagnosticLine(msg.message || '', true);
+      showToast(msg.message, 'error');
+    } else if (msg.type === 'BULK_PROJECT_STATUS') {
+      updateBulkProjectStatus(msg);
+    } else if (msg.type === 'BULK_FINISHED') {
+      if (btnStartBulk) { btnStartBulk.disabled = false; btnStartBulk.textContent = '⚡ Start Bulk Projects'; }
+      showToast(msg.stopped ? 'Bulk generation stopped' : 'Bulk generation finished & RAM freed!');
     } else if (msg.type === 'QUEUE_FINISHED') {
       syncBatchStateFromServer().finally(() => finishQueue());
     }
@@ -1169,6 +1182,201 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
+
+  // ================= 12. Failover Notification & 4-Project Bulk Generation =================
+  const failoverAlertBanner = document.getElementById('failoverAlertBanner');
+  const failoverAlertText = document.getElementById('failoverAlertText');
+  const btnFailoverLogin = document.getElementById('btnFailoverLogin');
+  const btnDismissFailover = document.getElementById('btnDismissFailover');
+  const btnBulkMode = document.getElementById('btnBulkMode');
+  const btnBackSingle = document.getElementById('btnBackSingle');
+  const bulkWorkspace = document.getElementById('bulkWorkspace');
+  const sidebarContainer = document.getElementById('sidebarContainer');
+  const singleGalleryArea = document.querySelector('.gallery-area');
+  const bulkProjectsGrid = document.getElementById('bulkProjectsGrid');
+  const bulkUnlockedBadge = document.getElementById('bulkUnlockedBadge');
+  const btnStartBulk = document.getElementById('btnStartBulk');
+  const btnStopBulk = document.getElementById('btnStopBulk');
+
+  let pendingFailoverLoginPid = null;
+  let bulkPairsCache = [];
+
+  function showFailoverAlert(msg, loginPid) {
+    if (!failoverAlertBanner || !failoverAlertText) return;
+    failoverAlertText.textContent = msg || 'Profile failover alert';
+    pendingFailoverLoginPid = loginPid || null;
+    if (btnFailoverLogin) {
+      btnFailoverLogin.style.display = loginPid ? 'inline-block' : 'none';
+      if (loginPid) btnFailoverLogin.textContent = `🔑 Login P${loginPid.replace('acc', '')}`;
+    }
+    failoverAlertBanner.style.display = 'flex';
+  }
+  if (btnDismissFailover && failoverAlertBanner) {
+    btnDismissFailover.addEventListener('click', () => { failoverAlertBanner.style.display = 'none'; });
+  }
+  if (btnFailoverLogin) {
+    btnFailoverLogin.addEventListener('click', async () => {
+      if (!pendingFailoverLoginPid) return;
+      try {
+        await fetch(`/api/profiles/${pendingFailoverLoginPid}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: state.engine || 'gemini-canvas' }),
+        });
+        showToast(`Opening Chrome login for P${pendingFailoverLoginPid.replace('acc', '')}...`);
+      } catch {}
+    });
+  }
+
+  function setBulkView(open) {
+    if (!bulkWorkspace || !sidebarContainer || !singleGalleryArea) return;
+    bulkWorkspace.style.display = open ? 'flex' : 'none';
+    sidebarContainer.style.display = open ? 'none' : '';
+    singleGalleryArea.style.display = open ? 'none' : '';
+    if (btnBulkMode) btnBulkMode.classList.toggle('active', open);
+  }
+
+  async function loadAndRenderBulkPairs() {
+    const res = await fetch('/api/bulk/pairs');
+    const data = await res.json();
+    bulkPairsCache = data.pairs || [];
+    if (bulkUnlockedBadge) {
+      bulkUnlockedBadge.textContent = `${data.unlockedProjects || 0} / 4 Projects Unlocked`;
+    }
+    if (!data.canEnableBulk) {
+      showToast('Bulk Mode requires at least 2 logged-in profiles (e.g. P1 + P2) with a backup!', 'error');
+      showFailoverAlert('⚠️ Bulk Mode locked: Login at least one full pair (P1 + P2) so every project has a backup profile.', 'acc2');
+      if (sessionInfoModal) {
+        refreshProfiles();
+        sessionInfoModal.classList.add('open');
+      }
+      return false;
+    }
+    if (bulkProjectsGrid) {
+      bulkProjectsGrid.innerHTML = '';
+      bulkPairsCache.forEach(pair => {
+        const i = pair.projectIndex;
+        const card = document.createElement('div');
+        card.id = `bulk-proj-${i}`;
+        card.style.cssText = `background:#0A0F1D; border:1px solid ${pair.unlocked ? '#1E293B' : '#334155'}; border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; opacity:${pair.unlocked ? '1' : '0.55'};`;
+        const statusHtml = pair.unlocked
+          ? `<span id="bulk-status-${i}" style="padding:2px 7px; border-radius:4px; background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.4); color:#6EE7B7; font-size:9.5px; font-weight:800;">🔓 Ready (${pair.primaryLabel} → ${pair.backupLabel})</span>`
+          : `<span id="bulk-status-${i}" style="padding:2px 7px; border-radius:4px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.4); color:#FCA5A5; font-size:9.5px; font-weight:800;">🔒 Locked: Login ${pair.primaryLabel} + ${pair.backupLabel}</span>`;
+        card.innerHTML = `
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:6px;">
+            <strong style="font-size:12px; color:#F8FAFC;">Project ${i + 1} (${pair.primaryLabel} / ${pair.backupLabel})</strong>
+            ${statusHtml}
+          </div>
+          <div style="display:grid; grid-template-columns:1.2fr 1fr 0.8fr; gap:6px;">
+            <input type="text" id="bulk-name-${i}" value="Bulk_Project_0${i + 1}" placeholder="Project Name" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+            <select id="bulk-engine-${i}" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 6px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+              <option value="gemini-canvas">💎 Gemini Canvas</option>
+              <option value="google-flow">🌊 Google Flow</option>
+            </select>
+            <select id="bulk-aspect-${i}" ${pair.unlocked ? '' : 'disabled'} style="padding:5px 6px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="1:1">1:1</option>
+            </select>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <input type="text" id="bulk-char-${i}" placeholder="Character consistency..." ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+            <input type="text" id="bulk-style-${i}" placeholder="Style consistency..." ${pair.unlocked ? '' : 'disabled'} style="padding:5px 8px; font-size:10px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#E2E8F0;">
+          </div>
+          <textarea id="bulk-prompts-${i}" rows="4" placeholder="Enter prompts (one per line, optional 00.00-04.00 | prompt)..." ${pair.unlocked ? '' : 'disabled'} style="padding:6px 8px; font-size:10.5px; background:#050811; border:1px solid #1E293B; border-radius:6px; color:#F8FAFC; resize:vertical;"></textarea>
+        `;
+        bulkProjectsGrid.appendChild(card);
+      });
+    }
+    return true;
+  }
+
+  function updateBulkProjectStatus(data) {
+    const badge = document.getElementById(`bulk-status-${data.projectIndex}`);
+    if (!badge) return;
+    if (data.status === 'running') {
+      badge.textContent = `⏳ Running on ${data.activeProfile}`;
+      badge.style.color = '#7DD3FC';
+    } else if (data.status === 'failover') {
+      badge.textContent = `🔄 Switching to backup ${data.activeProfile}...`;
+      badge.style.color = '#FCD34D';
+    } else if (data.status === 'done' || data.status === 'partial') {
+      badge.textContent = `✅ Done (${data.completedCount}/${data.total})`;
+      badge.style.color = '#6EE7B7';
+    }
+  }
+
+  if (btnBulkMode) {
+    btnBulkMode.addEventListener('click', async () => {
+      const ok = await loadAndRenderBulkPairs();
+      if (ok) setBulkView(true);
+    });
+  }
+  if (btnBackSingle) {
+    btnBackSingle.addEventListener('click', () => setBulkView(false));
+  }
+  if (btnStartBulk) {
+    btnStartBulk.addEventListener('click', async () => {
+      const projects = [];
+      let baseIdx = 1;
+      bulkPairsCache.forEach(pair => {
+        if (!pair.unlocked) return;
+        const i = pair.projectIndex;
+        const raw = (document.getElementById(`bulk-prompts-${i}`)?.value || '').trim();
+        if (!raw) return;
+        const aspect = document.getElementById(`bulk-aspect-${i}`)?.value || '16:9';
+        const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+        const items = lines.map((line, k) => {
+          const parsed = window.RenderXParser ? window.RenderXParser.parseLine(line, k + 1) : null;
+          return {
+            index: baseIdx++,
+            rawPrompt: parsed ? parsed.prompt : line,
+            prompt: parsed ? parsed.prompt : line,
+            timestamp: parsed ? parsed.timestamp : `00.00-04.00`,
+            cleanTimestamp: parsed ? parsed.cleanTimestamp : `shot_${k + 1}`,
+            aspectRatio: aspect,
+            status: 'pending',
+          };
+        });
+        projects.push({
+          projectIndex: i,
+          projectName: document.getElementById(`bulk-name-${i}`)?.value || `Bulk_Project_0${i + 1}`,
+          engine: document.getElementById(`bulk-engine-${i}`)?.value || 'gemini-canvas',
+          subMode: 'image',
+          useFlowAgent: true,
+          charDesc: document.getElementById(`bulk-char-${i}`)?.value || '',
+          styleDesc: document.getElementById(`bulk-style-${i}`)?.value || '',
+          items,
+        });
+      });
+      if (!projects.length) {
+        showToast('Enter prompts in at least 1 unlocked Bulk Project!', 'error');
+        return;
+      }
+      btnStartBulk.disabled = true;
+      btnStartBulk.textContent = '⏳ Running Bulk...';
+      try {
+        const res = await fetch('/api/bulk/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projects }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'Failed to start bulk');
+        showToast(`Started ${data.projectsStarted} Bulk project(s) with paired backup!`);
+      } catch (err) {
+        btnStartBulk.disabled = false;
+        btnStartBulk.textContent = '⚡ Start Bulk Projects';
+        showToast(err.message, 'error');
+      }
+    });
+  }
+  if (btnStopBulk) {
+    btnStopBulk.addEventListener('click', async () => {
+      await fetch('/api/batch/stop', { method: 'POST' });
+      showToast('Stopping Bulk projects...');
+    });
+  }
 
   // Custom Canvas URL persistence
   const customCanvasUrlInput = document.getElementById('customCanvasUrlInput');
