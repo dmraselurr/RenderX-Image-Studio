@@ -61,14 +61,16 @@
     }
     .logo-group { display: flex; align-items: center; gap: 10px; }
     .ris-badge {
-      width: 32px; height: 32px; border-radius: 8px;
-      background: linear-gradient(135deg, #111827, #090D16);
-      border: 1.5px solid #FF1E56;
-      display: flex; align-items: center; justify-content: center;
-      font-weight: 900; font-size: 11px; letter-spacing: 0.5px;
-      color: #fff;
-      box-shadow: 0 0 14px rgba(255, 30, 86, 0.4);
+      width: 34px; height: 34px; border-radius: 9px;
+      background: radial-gradient(circle at 30% 25%, #230712, #0C0307);
+      border: 1.8px solid #E11D48;
+      display: flex; align-items: baseline; justify-content: center;
+      padding-top: 4px;
+      box-shadow: 0 0 14px rgba(225, 29, 72, 0.55), inset 0 0 8px rgba(225, 29, 72, 0.2);
+      user-select: none;
     }
+    .rx-r { font-weight: 900; font-size: 17px; line-height: 1; color: #FFFFFF; letter-spacing: -0.5px; }
+    .rx-x { font-weight: 900; font-size: 11px; line-height: 1; color: #FF1E56; margin-left: 0.5px; }
     .brand-title { font-size: 14px; font-weight: 800; letter-spacing: -0.2px; color: #fff; }
     .brand-ver {
       font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px;
@@ -420,7 +422,7 @@
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
     .card-actions {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 2px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-top: 2px;
     }
     .card-btn {
       padding: 5px; border-radius: 5px;
@@ -457,7 +459,7 @@
 <body>
   <header class="topbar">
     <div class="logo-group">
-      <div class="ris-badge">RIS</div>
+      <div class="ris-badge"><span class="rx-r">R</span><span class="rx-x">x</span></div>
       <div>
         <div>
           <span class="brand-title">RenderX Canvas Studio</span>
@@ -863,8 +865,10 @@
           <div class="card-body">
             <div class="card-file">📁 ${escapeHtml(shot.filename)}</div>
             <div class="card-prompt" title="${escapeHtml(shot.prompt)}">${escapeHtml(shot.prompt)}</div>
+            <textarea class="card-edit-box hidden" rows="2" style="font-size:10px;padding:5px;min-height:42px;">${escapeHtml(shot.prompt)}</textarea>
             <div class="card-actions">
               <button type="button" class="card-btn btn-view" ${shot.status === 'ready' ? '' : 'disabled'}>🔍 View</button>
+              <button type="button" class="card-btn btn-edit" ${shot.status === 'pending' ? 'disabled' : ''}>✏️ Edit</button>
               <button type="button" class="card-btn btn-regen" ${shot.status === 'pending' ? 'disabled' : ''}>🔄 Regen</button>
               <button type="button" class="card-btn btn-save" ${shot.status === 'ready' ? '' : 'disabled'}>💾 Save</button>
             </div>
@@ -873,8 +877,32 @@
 
         const imgEl = card.querySelector('.card-media img');
         if (imgEl) imgEl.addEventListener('click', () => openLightbox(shot.dataUrl));
+        const promptEl = card.querySelector('.card-prompt');
+        const editBox = card.querySelector('.card-edit-box');
         card.querySelector('.btn-view').addEventListener('click', () => openLightbox(shot.dataUrl));
-        card.querySelector('.btn-regen').addEventListener('click', () => regenerateSingle(shot.index));
+        card.querySelector('.btn-edit').addEventListener('click', () => {
+          const isEditing = !editBox.classList.contains('hidden');
+          if (isEditing) {
+            shot.prompt = editBox.value.trim() || shot.prompt;
+            promptEl.textContent = shot.prompt;
+            editBox.classList.add('hidden');
+            promptEl.classList.remove('hidden');
+            showToast('Prompt updated — click Regen to regenerate');
+          } else {
+            editBox.value = shot.prompt;
+            promptEl.classList.add('hidden');
+            editBox.classList.remove('hidden');
+            editBox.focus();
+          }
+        });
+        card.querySelector('.btn-regen').addEventListener('click', () => {
+          if (!editBox.classList.contains('hidden')) {
+            shot.prompt = editBox.value.trim() || shot.prompt;
+            editBox.classList.add('hidden');
+            promptEl.classList.remove('hidden');
+          }
+          regenerateSingle(shot.index);
+        });
         card.querySelector('.btn-save').addEventListener('click', () => downloadSingle(shot));
       }
 
@@ -997,17 +1025,8 @@
         state.shots.forEach(renderCard);
         updateStats();
 
-        for (const shot of state.shots) {
-          if (state.isStopping) {
-            if (shot.status === 'pending') {
-              shot.status = 'failed';
-              shot.error = 'Stopped by user';
-              renderCard(shot);
-            }
-            continue;
-          }
-          await generateShot(shot);
-        }
+        setLog(`Generating all ${state.shots.length} shots simultaneously...`);
+        await Promise.allSettled(state.shots.map(shot => generateShot(shot)));
 
         state.isRunning = false;
         stopBtn.disabled = true;
@@ -1033,10 +1052,8 @@
         state.isStopping = false;
         generateBtn.disabled = true;
         stopBtn.disabled = false;
-        for (const shot of failedShots) {
-          if (state.isStopping) break;
-          await generateShot(shot);
-        }
+        setLog(`Regenerating ${failedShots.length} failed shots simultaneously...`);
+        await Promise.allSettled(failedShots.map(shot => generateShot(shot)));
         state.isRunning = false;
         stopBtn.disabled = true;
         generateBtn.disabled = false;
