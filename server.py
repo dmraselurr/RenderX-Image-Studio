@@ -122,6 +122,8 @@ class EngineState:
         self.current_engine = "gemini-canvas"
         self.current_sub_mode = "image"
         self.last_batch_dir: Path = OUTPUTS_DIR
+        self.bulk_project_dirs: Dict[int, Path] = {}
+        self.bulk_project_items: Dict[int, List[Dict[str, Any]]] = {}
 
 
 state = EngineState()
@@ -608,6 +610,25 @@ async def handle_shot_result(pid: str, res: Dict[str, Any], item_map: Dict[int, 
         fn = item.get("filename") or (f"{idx:02d}.mp4" if "video" in sub_mode else f"{idx:02d}.png")
         save_data_url_to_disk(data_url, batch_dir / fn)
 
+        bulk_pidx = item.get("bulkProjectIndex")
+        if bulk_pidx is not None:
+            proj_items = state.bulk_project_items.get(bulk_pidx, [])
+            b_done = sum(1 for x in proj_items if x.get("status") == "done")
+            await broadcast_ws({
+                "type": "BULK_SHOT_UPDATED",
+                "projectIndex": bulk_pidx,
+                "index": idx,
+                "status": "done",
+                "profileLabel": profile_short_label(pid),
+                "filename": fn,
+                "mediaType": "video" if "video" in sub_mode else "image",
+                "dataUrl": data_url,
+                "completedCount": b_done,
+                "total": len(proj_items),
+                "outputDir": str(batch_dir),
+            })
+            return
+
         completed = sum(1 for x in state.current_items if x.get("status") == "done")
         await broadcast_ws({
             "type": "ITEM_COMPLETED",
@@ -626,6 +647,21 @@ async def handle_shot_result(pid: str, res: Dict[str, Any], item_map: Dict[int, 
     else:
         item["status"] = "failed"
         item["error"] = res.get("error", "Unknown error")
+        bulk_pidx = item.get("bulkProjectIndex")
+        if bulk_pidx is not None:
+            proj_items = state.bulk_project_items.get(bulk_pidx, [])
+            b_done = sum(1 for x in proj_items if x.get("status") == "done")
+            await broadcast_ws({
+                "type": "BULK_SHOT_UPDATED",
+                "projectIndex": bulk_pidx,
+                "index": idx,
+                "status": "failed",
+                "profileLabel": profile_short_label(pid),
+                "error": item["error"],
+                "completedCount": b_done,
+                "total": len(proj_items),
+            })
+            return
         await broadcast_ws({
             "type": "ITEM_FAILED",
             "index": idx,
@@ -2437,7 +2473,16 @@ async def _failover_or_notify(
     for it in failed_items:
         it["status"] = "pending"
         it["error"] = None
-        await broadcast_ws({"type": "SHOT_UPDATED", "index": it["index"], "status": "pending", "profile": next_lbl})
+        if it.get("bulkProjectIndex") is not None:
+            await broadcast_ws({
+                "type": "BULK_SHOT_UPDATED",
+                "projectIndex": it["bulkProjectIndex"],
+                "index": it["index"],
+                "status": "retrying",
+                "profileLabel": next_lbl,
+            })
+        else:
+            await broadcast_ws({"type": "SHOT_UPDATED", "index": it["index"], "status": "pending", "profile": next_lbl})
 
     try:
         await _run_engine_for_profile(next_logged, failed_items, item_map, engine, sub_mode, batch_dir, options)
@@ -2603,6 +2648,10 @@ async def api_bulk_start(req: BulkStartReq):
         raw_pn = re.sub(r"[^a-zA-Z0-9_-]+", "_", (proj.projectName or f"Bulk_P{proj.projectIndex + 1}").strip()).strip("_") or f"Bulk_P{proj.projectIndex + 1}"
         batch_dir = OUTPUTS_DIR / f"{raw_pn}_{time.strftime('%Y%m%d_%H%M%S')}"
         batch_dir.mkdir(parents=True, exist_ok=True)
+        for it in proj.items:
+            it["bulkProjectIndex"] = proj.projectIndex
+        state.bulk_project_dirs[proj.projectIndex] = batch_dir
+        state.bulk_project_items[proj.projectIndex] = proj.items
         item_map = {it["index"]: it for it in proj.items}
         options = {
             "projectName": proj.projectName,
@@ -2676,6 +2725,16 @@ async def api_bulk_start(req: BulkStartReq):
 
     asyncio.create_task(orchestrate_bulk())
     return {"success": True, "projectsStarted": len(valid_projects)}
+
+
+@app.post("/api/bulk/project/{project_index}/open-folder")
+async def api_bulk_open_folder(project_index: int):
+    folder = str(state.bulk_project_dirs.get(project_index) or OUTPUTS_DIR)
+    try:
+        os.startfile(folder)
+    except Exception:
+        subprocess.Popen(["explorer", folder])
+    return {"success": True, "path": folder}
 
 
 @app.post("/api/batch/stop")
