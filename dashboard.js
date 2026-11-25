@@ -1190,6 +1190,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const failoverAlertText = document.getElementById('failoverAlertText');
   const btnFailoverLogin = document.getElementById('btnFailoverLogin');
   const btnDismissFailover = document.getElementById('btnDismissFailover');
+  const bulkAlertBanner = document.getElementById('bulkAlertBanner');
+  const bulkAlertText = document.getElementById('bulkAlertText');
+  const btnBulkAlertLogin = document.getElementById('btnBulkAlertLogin');
+  const btnBulkAlertManage = document.getElementById('btnBulkAlertManage');
+  const btnDismissBulkAlert = document.getElementById('btnDismissBulkAlert');
   const btnSingleMode = document.getElementById('btnSingleMode');
   const btnBulkMode = document.getElementById('btnBulkMode');
   const btnBackSingle = document.getElementById('btnBackSingle');
@@ -1225,6 +1230,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const biSaveBtn = document.getElementById('biSaveBtn');
 
   let pendingFailoverLoginPid = null;
+  let pendingBulkAlertLoginPid = null;
   let bulkPairsCache = [];
   let bulkFilterMode = 'all';
   let editingBulkIdx = 0;
@@ -1247,22 +1253,53 @@ document.addEventListener('DOMContentLoaded', () => {
   }));
 
   function showFailoverAlert(msg, loginPid) {
-    if (!failoverAlertBanner || !failoverAlertText) return;
-    failoverAlertText.textContent = msg || 'Profile failover alert';
-    pendingFailoverLoginPid = loginPid || null;
-    if (btnFailoverLogin) {
-      btnFailoverLogin.style.display = loginPid ? 'inline-block' : 'none';
-      if (loginPid) btnFailoverLogin.textContent = `🔑 Login P${loginPid.replace('acc', '')}`;
+    if (failoverAlertBanner && failoverAlertText) {
+      failoverAlertText.textContent = msg || 'Profile failover alert';
+      pendingFailoverLoginPid = loginPid || null;
+      if (btnFailoverLogin) {
+        btnFailoverLogin.style.display = loginPid ? 'inline-block' : 'none';
+        if (loginPid) btnFailoverLogin.textContent = `🔑 Login P${loginPid.replace('acc', '')}`;
+      }
+      failoverAlertBanner.style.display = 'flex';
     }
-    failoverAlertBanner.style.display = 'flex';
+    if (bulkWorkspace && bulkWorkspace.style.display !== 'none') {
+      showBulkAccountAlert(msg, loginPid);
+    }
+  }
+  function showBulkAccountAlert(msg, loginPid) {
+    if (!bulkAlertBanner || !bulkAlertText) return;
+    bulkAlertText.textContent = msg;
+    pendingBulkAlertLoginPid = loginPid || null;
+    if (btnBulkAlertLogin) {
+      btnBulkAlertLogin.style.display = loginPid ? 'inline-block' : 'none';
+      if (loginPid) btnBulkAlertLogin.textContent = `🔑 Login P${loginPid.replace('acc', '')}`;
+    }
+    bulkAlertBanner.style.display = 'flex';
   }
   if (btnDismissFailover && failoverAlertBanner) {
     btnDismissFailover.addEventListener('click', () => { failoverAlertBanner.style.display = 'none'; });
+  }
+  if (btnDismissBulkAlert && bulkAlertBanner) {
+    btnDismissBulkAlert.addEventListener('click', () => { bulkAlertBanner.style.display = 'none'; });
   }
   if (btnFailoverLogin) {
     btnFailoverLogin.addEventListener('click', async () => {
       if (!pendingFailoverLoginPid) return;
       await loginProfileById(pendingFailoverLoginPid);
+    });
+  }
+  if (btnBulkAlertLogin) {
+    btnBulkAlertLogin.addEventListener('click', async () => {
+      if (!pendingBulkAlertLoginPid) return;
+      await loginProfileById(pendingBulkAlertLoginPid);
+    });
+  }
+  if (btnBulkAlertManage) {
+    btnBulkAlertManage.addEventListener('click', () => {
+      if (sessionInfoModal) {
+        refreshProfiles();
+        sessionInfoModal.classList.add('open');
+      }
     });
   }
 
@@ -1349,20 +1386,18 @@ document.addEventListener('DOMContentLoaded', () => {
       const i = pair.projectIndex;
       const ps = bulkProjectsState[i];
 
-      // 1. Compact Click-to-Configure Setup Box (Top Row of 4)
+      // 1. Compact Click-to-Configure Setup Box (Top Row of 4 — clicking locked box notifies account setup required)
       const box = document.createElement('button');
       box.type = 'button';
-      box.style.cssText = `text-align:left; padding:8px 10px; border-radius:8px; border:1px solid ${pair.unlocked ? (ps.items.length ? '#38BDF8' : '#1E293B') : '#334155'}; background:${pair.unlocked ? '#0A0F1D' : '#070A12'}; color:#E2E8F0; cursor:${pair.unlocked ? 'pointer' : 'not-allowed'}; opacity:${pair.unlocked ? '1' : '0.55'}; display:flex; align-items:center; justify-content:space-between; gap:6px;`;
+      box.style.cssText = `text-align:left; padding:8px 10px; border-radius:8px; border:1px solid ${pair.unlocked ? (ps.items.length ? '#38BDF8' : '#1E293B') : '#334155'}; background:${pair.unlocked ? '#0A0F1D' : '#070A12'}; color:#E2E8F0; cursor:pointer; opacity:${pair.unlocked ? '1' : '0.78'}; display:flex; align-items:center; justify-content:space-between; gap:6px;`;
       box.innerHTML = `
         <div>
-          <div style="font-size:10.5px; font-weight:800; color:${pair.unlocked ? '#F8FAFC' : '#94A3B8'};">📋 Project ${i + 1} Setup (${pair.primaryLabel}→${pair.backupLabel})</div>
-          <div style="font-size:9.5px; color:${ps.items.length ? '#38BDF8' : '#64748B'}; margin-top:2px;">${pair.unlocked ? (ps.items.length ? `${ps.items.length} shot(s) configured • Click to edit` : 'Click to add prompts & refs') : `Locked — Login ${pair.primaryLabel} + ${pair.backupLabel}`}</div>
+          <div style="font-size:10.5px; font-weight:800; color:${pair.unlocked ? '#F8FAFC' : '#CBD5E1'};">📋 Project ${i + 1} Setup (${pair.primaryLabel}→${pair.backupLabel})</div>
+          <div style="font-size:9.5px; color:${pair.unlocked ? (ps.items.length ? '#38BDF8' : '#64748B') : '#FCA5A5'}; margin-top:2px;">${pair.unlocked ? (ps.items.length ? `${ps.items.length} shot(s) configured • Click to edit` : 'Click to add prompts & refs') : `Account setup needed (${pair.primaryLabel} + ${pair.backupLabel})`}</div>
         </div>
-        <span style="font-size:10px; font-weight:800; color:${pair.unlocked ? '#6EE7B7' : '#FCA5A5'};">${pair.unlocked ? (ps.items.length ? '✅ Ready' : '+ Input') : '🔒'}</span>
+        <span style="font-size:10px; font-weight:800; color:${pair.unlocked ? '#6EE7B7' : '#FCA5A5'};">${pair.unlocked ? (ps.items.length ? '✅ Ready' : '+ Input') : '🔒 Setup'}</span>
       `;
-      if (pair.unlocked) {
-        box.addEventListener('click', () => openBulkInputModal(i, pair));
-      }
+      box.addEventListener('click', () => handleBulkProjectInputClick(i, pair));
       bulkSetupBoxesBar.appendChild(box);
 
       if (bulkFilterMode !== 'all' && Number(bulkFilterMode) !== i) return;
@@ -1513,6 +1548,27 @@ document.addEventListener('DOMContentLoaded', () => {
     updateBulkSummaryAndTabs();
   }
 
+  function handleBulkProjectInputClick(idx, pair) {
+    if (!pair.unlocked) {
+      const missing = [];
+      let firstMissingPid = null;
+      if (!pair.primaryLoggedIn) {
+        missing.push(pair.primaryLabel);
+        firstMissingPid = pair.primaryId;
+      }
+      if (!pair.backupLoggedIn) {
+        missing.push(pair.backupLabel);
+        if (!firstMissingPid) firstMissingPid = pair.backupId;
+      }
+      const msg = `⚠️ Project ${idx + 1} সেকশনে কাজ করার জন্য আপনার অ্যাকাউন্ট সেটআপ করা নেই (${missing.join(' + ')} লগইন করুন)!`;
+      showBulkAccountAlert(msg, firstMissingPid);
+      showToast(msg, 'error');
+      return;
+    }
+    if (bulkAlertBanner) bulkAlertBanner.style.display = 'none';
+    openBulkInputModal(idx, pair);
+  }
+
   function openBulkInputModal(idx, pair) {
     editingBulkIdx = idx;
     const ps = bulkProjectsState[idx];
@@ -1653,16 +1709,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const res = await fetch('/api/bulk/pairs');
     const data = await res.json();
     bulkPairsCache = data.pairs || [];
-    if (!data.canEnableBulk) {
-      showToast('Bulk Mode requires at least 2 logged-in profiles (e.g. P1 + P2) with a backup!', 'error');
-      showFailoverAlert('⚠️ Bulk Mode locked: Login at least one full pair (P1 + P2) so every project has a backup profile.', 'acc2');
-      if (sessionInfoModal) {
-        refreshProfiles();
-        sessionInfoModal.classList.add('open');
-      }
-      return false;
-    }
     renderBulkWorkspace();
+    if (!data.canEnableBulk) {
+      showBulkAccountAlert(
+        '⚠️ কোনো বাল্ক সেকশনে কাজ করার জন্য পূর্ণ অ্যাকাউন্ট পেয়ার (যেমন P1 + P2) সেটআপ করা নেই। যে প্রজেক্টে কাজ করবেন সেটিতে ইনপুট দিতে তার পেয়ার প্রোফাইলগুলো লগইন করুন।',
+        'acc2'
+      );
+    } else if (bulkAlertBanner) {
+      bulkAlertBanner.style.display = 'none';
+    }
     return true;
   }
 
