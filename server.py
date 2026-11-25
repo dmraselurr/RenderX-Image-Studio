@@ -6,6 +6,8 @@ Gemini Canvas (Share App + Concurrent Grid Streaming), and Google Flow (labs.goo
 
 import asyncio
 import base64
+import ctypes
+import gc
 import json
 import os
 import re
@@ -547,11 +549,18 @@ async def get_or_open_worker_context(pid: str, clear_existing_chrome: bool = Fal
             "--disable-background-timer-throttling",
             "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
+            "--mute-audio",
+            "--disable-gpu-shader-disk-cache",
+            "--disable-background-networking",
+            "--no-pings",
+            "--disable-sync",
+            "--metrics-recording-only",
         ],
     }
     if CHROME_EXE:
         kwargs["executable_path"] = CHROME_EXE
 
+    await _wait_for_safe_ram()
     await ensure_playwright()
     ctx = await state.pw.chromium.launch_persistent_context(**kwargs)
     state.worker_contexts[pid] = ctx
@@ -1778,13 +1787,7 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    for ctx in list(state.worker_contexts.values()):
-        try:
-            await ctx.close()
-        except Exception:
-            pass
-    if state.pw:
-        await state.pw.stop()
+    await _cleanup_all_workers_and_cache()
 
 
 @app.get("/")
@@ -2087,25 +2090,90 @@ _CHROME_CACHE_SUBDIRS = (
     Path("GrShaderCache"),
     Path("ShaderCache"),
     Path("GraphiteDawnCache"),
+    Path("Crashpad"),
+    Path("BrowserMetrics"),
 )
 
 
+def _get_free_ram_mb() -> int:
+    """Return available physical RAM in MB on Windows (or 4096 fallback)."""
+    if os.name != "nt":
+        return 4096
+    try:
+        class _MEMSTAT(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        stat = _MEMSTAT()
+        stat.dwLength = ctypes.sizeof(_MEMSTAT)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return int(stat.ullAvailPhys // (1024 * 1024))
+    except Exception:
+        pass
+    return 4096
+
+
+async def _wait_for_safe_ram(min_free_mb: int = 800, max_wait_sec: int = 10):
+    """Briefly pause launching another Chrome profile if available RAM dips below threshold."""
+    for _ in range(max_wait_sec):
+        free_mb = await asyncio.to_thread(_get_free_ram_mb)
+        if free_mb >= min_free_mb:
+            return
+        await asyncio.sleep(1.0)
+
+
 def _purge_chrome_profile_caches() -> int:
-    """Delete accumulated Chrome caches across profiles while preserving Google login cookies/sessions."""
+    """Delete accumulated Chrome caches, crashpads & logs across profiles while preserving Google login cookies/sessions."""
     removed = 0
-    if not PROFILES_DIR.exists():
-        return 0
-    for prof_dir in PROFILES_DIR.iterdir():
-        if not prof_dir.is_dir():
-            continue
-        for rel in _CHROME_CACHE_SUBDIRS:
-            target = prof_dir / rel
-            if target.exists():
+    if PROFILES_DIR.exists():
+        for prof_dir in PROFILES_DIR.iterdir():
+            if not prof_dir.is_dir():
+                continue
+            for rel in _CHROME_CACHE_SUBDIRS:
+                target = prof_dir / rel
+                if target.exists():
+                    try:
+                        shutil.rmtree(target, ignore_errors=True)
+                        removed += 1
+                    except Exception:
+                        pass
+            for log_name in ("chrome_debug.log", "chrome_debug.log.old"):
+                lf = prof_dir / log_name
+                if lf.exists():
+                    try:
+                        lf.unlink()
+                        removed += 1
+                    except OSError:
+                        pass
+    return removed
+
+
+def _purge_temp_artifacts() -> int:
+    """Remove temporary upload/Playwright artifact files from system %TEMP% without touching user outputs."""
+    removed = 0
+    tmp_root = Path(tempfile.gettempdir())
+    prefixes = ("rx_char_", "rx_style_", "rx_flow_", "playwright-artifacts-")
+    try:
+        for entry in tmp_root.iterdir():
+            if entry.name.startswith(prefixes):
                 try:
-                    shutil.rmtree(target, ignore_errors=True)
+                    if entry.is_dir():
+                        shutil.rmtree(entry, ignore_errors=True)
+                    else:
+                        entry.unlink()
                     removed += 1
                 except Exception:
                     pass
+    except Exception:
+        pass
     return removed
 
 
@@ -2121,13 +2189,25 @@ async def _close_worker_context(pid: str):
         await asyncio.to_thread(kill_stale_chrome, p_path)
 
 
+async def _stop_playwright_if_idle():
+    if not state.worker_contexts and not state.login_open_pids and state.pw is not None:
+        try:
+            await state.pw.stop()
+        except Exception:
+            pass
+        state.pw = None
+
+
 async def _cleanup_all_workers_and_cache():
     for pid in list(state.worker_contexts.keys()):
         await _close_worker_context(pid)
-    cleared = await asyncio.to_thread(_purge_chrome_profile_caches)
+    await _stop_playwright_if_idle()
+    cleared_cache = await asyncio.to_thread(_purge_chrome_profile_caches)
+    cleared_temp = await asyncio.to_thread(_purge_temp_artifacts)
+    gc.collect()
     await broadcast_ws({
         "type": "DIAGNOSTIC_LOG",
-        "text": f"🧹 Freed Chrome RAM & cleared {cleared} cache folder(s) — device fast & smooth!"
+        "text": f"🧹 Freed Chrome/Playwright RAM, cleared {cleared_cache} cache & {cleared_temp} temp items — device fast & smooth!"
     })
 
 
